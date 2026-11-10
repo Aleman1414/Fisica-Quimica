@@ -1,0 +1,256 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures:
+//
+// Collection: admins
+// Document ID: {adminUid}
+// Fields:
+//   - role: string (required, == 'admin') - Administrator role identifier
+//   - email: string (optional, <= 254 chars) - Admin email
+//   - name: string (optional, <= 120 chars) - Admin display name
+//   - createdAt: timestamp (optional, immutable) - Creation timestamp
+//
+// Collection: sections
+// Document ID: {sectionId}
+// Fields:
+//   - name: string (required, 1..100 chars) - Section display name (e.g., "10-A")
+//   - code: string (required, 1..50 chars) - Section unique code
+//   - active: bool (required) - Whether students can register in this section
+//   - grade: string (optional, <= 20 chars) - Grade level (e.g., "10")
+//   - createdAt: timestamp (optional, immutable) - Creation timestamp
+//   - updatedAt: timestamp (optional) - Last update timestamp
+//
+// Collection: settings
+// Document ID: {settingId}
+// Fields:
+//   - Evaluation configuration parameters (managed exclusively by admins)
+//
+// Collection: participants
+// Document ID: {participantId}
+// Fields:
+//   - uid: string (required, immutable) - Firebase Auth UID of the student
+//   - documento: string (required, immutable, 1..50 chars) - Student identification document
+//   - fullName: string (required, 1..150 chars) - Student full name
+//   - sectionId: string (required, 1..100 chars) - Section reference ID
+//   - sectionName: string (required, 1..100 chars) - Denormalized section name
+//   - grade: string (required, 1..20 chars) - Student grade ("10")
+//   - attemptsCount: int (required, >= 0) - Total attempts consumed (or map per subject)
+//   - activeAttemptId: string (optional, nullable) - Currently active attempt ID
+//   - createdAt: timestamp (required, immutable) - Registration timestamp
+//   - updatedAt: timestamp (required) - Last update timestamp
+//   NOTE: Contains NO evaluation scores. Created/updated via Cloud Functions Admin SDK.
+//
+// Collection: participants_by_doc
+// Document ID: {documento}
+// Fields:
+//   - uid: string (required) - Firebase Auth UID owning this documento
+//   - participantId: string (required) - Reference to /participants/{participantId}
+//   - createdAt: timestamp (required) - Creation timestamp
+//   NOTE: Used by backend transactions to guarantee uniqueness of `documento`.
+//
+// Collection: questions
+// Document ID: {questionId}
+// Fields:
+//   - subject: string (required) - Subject ('physics' | 'chemistry' | etc.)
+//   - competency: string (required) - Evaluated competency
+//   - prompt: string (required) - Question stem / statement
+//   - options: list (required) - Answer choices
+//   - correctOptionId: string (required) - CONFIDENTIAL correct option ID
+//   - explanation: string (optional) - Pedagogical explanation
+//   - active: bool (required) - Whether question is eligible for random selection
+//   CRITICAL: Students must NEVER read /questions/{questionId}.
+//
+// Collection: attempt_secrets
+// Document ID: {attemptId}
+// Fields:
+//   - answerKey: map (required) - Server-only answer key mapping questionId -> correctOptionId
+//   CRITICAL: Server-only (Admin SDK in Cloud Functions). Never readable or writable by clients.
+//
+// Collection: active_attempts
+// Document ID: {attemptId}
+// Fields:
+//   - uid: string (required, immutable) - Student Firebase Auth UID
+//   - participantId: string (required, immutable) - Reference to participant doc
+//   - subject: string (required, immutable) - Subject identifier
+//   - attemptNumber: int (required, immutable) - 1-based attempt number
+//   - status: string (required, 'in_progress' | 'submitted' | 'expired') - Attempt lifecycle state
+//   - questions: list (required, immutable) - Sanitized questions & shuffled options (NO correctOptionId)
+//   - selectedAnswers: map (required, <= 50 keys) - Student answers map (questionId -> optionId)
+//   - startedAt: timestamp (required, immutable) - Server start timestamp
+//   - expiresAt: timestamp (required, immutable) - Server expiration deadline
+//   - updatedAt: timestamp (required) - Last progress save timestamp
+//
+// Collection: evaluation_results
+// Document ID: {attemptId}
+// Fields:
+//   - Graded evaluation results, scores, and breakdown.
+//   CRITICAL: Students must NEVER read or write /evaluation_results/{attemptId}.
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is an administrator via Custom Claims or /admins/{uid} document
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.admin == true ||
+        (
+          exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    // Check if user is owner based on document's uid field
+    function isDocOwner() {
+      return isAuthenticated() && resource.data.uid == request.auth.uid;
+    }
+
+    // Verify UID hasn't been tampered with on create
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    // Ensure uid field is not modified on update
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate string length
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // Validate that the document hasn't changed in immutable fields
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in both create and update)
+    // ===============================================================
+
+    // Validate section schema for /sections/{sectionId}
+    function isValidSection(data) {
+      return hasRequiredFields(['name', 'code', 'active']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 50 &&
+        data.active is bool &&
+        (!('grade' in data) || (data.grade is string && data.grade.size() <= 20)) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 500));
+    }
+
+    // Validate student progress update on /active_attempts/{attemptId}
+    function isValidStudentAttemptProgressUpdate() {
+      return isDocOwner() &&
+        uidNotModified() &&
+        resource.data.status == 'in_progress' &&
+        request.resource.data.status == 'in_progress' &&
+        request.time < resource.data.expiresAt &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['selectedAnswers', 'updatedAt']) &&
+        areImmutableFieldsUnchanged(['uid', 'participantId', 'subject', 'attemptNumber', 'questions', 'startedAt', 'expiresAt', 'status']) &&
+        request.resource.data.selectedAnswers is map &&
+        request.resource.data.selectedAnswers.size() <= 50 &&
+        request.resource.data.updatedAt == request.time;
+    }
+
+    // ===============================================================
+    // Collection Security Rules
+    // ===============================================================
+
+    // 1. Administrators (/admins/{adminUid})
+    match /admins/{adminUid} {
+      allow get: if isAuthenticated() && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() &&
+        request.resource.data.role is string &&
+        request.resource.data.role == 'admin';
+      allow delete: if isAdmin();
+    }
+
+    // 2. Course Sections (/sections/{sectionId})
+    match /sections/{sectionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidSection(request.resource.data);
+      allow update: if isAdmin() && isValidSection(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // 3. System Settings (/settings/{settingId})
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 4. Student Participants (/participants/{participantId})
+    // Contains registration profile and attempt counters (NO scores).
+    // Mutations occur exclusively via Cloud Functions (Admin SDK) or Admin UI.
+    match /participants/{participantId} {
+      allow get: if isAdmin() || isDocOwner();
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 5. Document Uniqueness Index (/participants_by_doc/{documento})
+    // Used by backend transactions to prevent duplicate identity documents.
+    match /participants_by_doc/{documento} {
+      allow read, write: if isAdmin();
+    }
+
+    // 6. Master Question Bank (/questions/{questionId})
+    // CRITICAL: Contains correctOptionId and explanation. Students must NEVER read.
+    match /questions/{questionId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 7. Server-Only Attempt Answer Keys (/attempt_secrets/{attemptId})
+    // Accessible ONLY via Firebase Admin SDK in Cloud Functions.
+    match /attempt_secrets/{attemptId} {
+      allow read, write: if false;
+    }
+
+    // 8. Active Evaluation Attempts (/active_attempts/{attemptId})
+    // Sanitized exam payload without answers. Students can read their own attempts
+    // and save selectedAnswers while the attempt is in_progress and before expiresAt.
+    match /active_attempts/{attemptId} {
+      allow get: if isAdmin() || isDocOwner();
+      allow list: if isAdmin() || isDocOwner();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || isValidStudentAttemptProgressUpdate();
+    }
+
+    // 9. Graded Evaluation Results (/evaluation_results/{attemptId})
+    // CRITICAL: Students must NEVER read or write their scores or graded results.
+    match /evaluation_results/{attemptId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 10. Default Deny Catch-All Rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

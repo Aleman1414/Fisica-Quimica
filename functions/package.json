@@ -1,0 +1,20 @@
+{
+  "name": "evaluaciones-fisica-quimica-functions",
+  "description": "Cloud Functions de seguridad, generación aleatoria, control de 3 intentos y calificación automática para Evaluaciones de Física y Química",
+  "scripts": {
+    "serve": "firebase emulators:start --only functions,firestore,auth",
+    "shell": "firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "firebase-admin": "^13.1.0",
+    "firebase-functions": "^6.3.1"
+  }
+}

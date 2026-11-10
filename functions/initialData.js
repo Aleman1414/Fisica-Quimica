@@ -1,0 +1,7 @@
+const { INITIAL_SECTIONS, INITIAL_SETTINGS, INITIAL_QUESTIONS } = require('./seedPayload');
+
+module.exports = {
+  INITIAL_SECTIONS,
+  INITIAL_SETTINGS,
+  INITIAL_QUESTIONS
+};

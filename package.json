@@ -1,0 +1,39 @@
+{
+  "name": "evaluaciones-fisica-quimica-10mo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Sistema Integral de Evaluaciones de Física y Química para Décimo Grado con React, Vite, Firebase y Vercel",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed": "node scripts/seedDatabase.js"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "axios": "^1.8.2",
+    "firebase": "^11.4.0",
+    "jspdf": "^3.0.1",
+    "jspdf-autotable": "^5.0.2",
+    "lucide-react": "^0.477.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.2.0",
+    "recharts": "^2.15.1",
+    "sweetalert2": "^11.17.2",
+    "tailwindcss": "^4.1.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^26.0.0",
+    "vite": "^6.2.0",
+    "vitest": "^3.0.7"
+  }
+}
