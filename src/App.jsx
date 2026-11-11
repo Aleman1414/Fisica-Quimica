@@ -10,6 +10,7 @@ import AdminParticipantesPage from './pages/admin/AdminParticipantesPage';
 import AdminResultadosPage from './pages/admin/AdminResultadosPage';
 import AdminPreguntasPage from './pages/admin/AdminPreguntasPage';
 import AdminReportesPage from './pages/admin/AdminReportesPage';
+import AdminDocentesPage from './pages/admin/AdminDocentesPage';
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
             <Route path="/admin/resultados" element={<AdminResultadosPage />} />
             <Route path="/admin/preguntas" element={<AdminPreguntasPage />} />
             <Route path="/admin/reportes" element={<AdminReportesPage />} />
+            <Route path="/admin/docentes" element={<AdminDocentesPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
@@ -34,4 +36,3 @@ export default function App() {
     </BrowserRouter>
   );
 }
-

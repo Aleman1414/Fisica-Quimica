@@ -1,6 +1,7 @@
 import {
   signInAnonymously,
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut as fbSignOut
 } from 'firebase/auth';
 import {
@@ -13,9 +14,8 @@ import {
   deleteDoc,
   runTransaction
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
 import axios from 'axios';
-import { auth, db, functions, isFirebaseConfigured } from '../lib/firebase';
+import { auth, db, isFirebaseConfigured, firebaseConfig } from '../lib/firebase';
 import { INITIAL_QUESTIONS, INITIAL_SECTIONS, INITIAL_SETTINGS } from '../data/initialQuestions';
 
 const STORAGE_KEYS = {
@@ -30,6 +30,18 @@ const STORAGE_KEYS = {
   ADMINS: 'eval10_admins_v1',
   STUDENT_SESSION: 'eval10_student_session_v1',
   ADMIN_SESSION: 'eval10_admin_session_v1'
+};
+
+export const DEFAULT_TEACHER_REGISTRATION_CODE = 'DOCENTE-2026';
+
+const DEFAULT_ADMIN_CREDENTIALS = {
+  uid: 'hPKUt1GtqDeuBL1ueADMZ4HI3uf1',
+  email: 'admin@ciencias10.edu.hn',
+  passwordHash: 'AdminCiencias2026!',
+  name: 'Coordinación Académica de Ciencias Naturales',
+  specialty: 'Física y Química',
+  role: 'admin',
+  active: true
 };
 
 export const apiClient = axios.create({
@@ -100,9 +112,43 @@ export async function ensureInitialized() {
   if (!questions || questions.length === 0) {
     writeLocalCollection(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS);
   }
-  const settings = readLocalCollection(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+  const settings = readLocalCollection(STORAGE_KEYS.SETTINGS, {
+    ...INITIAL_SETTINGS,
+    teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE
+  });
   if (!settings || !settings.id) {
-    writeLocalCollection(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+    writeLocalCollection(STORAGE_KEYS.SETTINGS, {
+      ...INITIAL_SETTINGS,
+      teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE
+    });
+  }
+  const admins = readLocalCollection(STORAGE_KEYS.ADMINS, [
+    {
+      id: DEFAULT_ADMIN_CREDENTIALS.uid,
+      uid: DEFAULT_ADMIN_CREDENTIALS.uid,
+      email: DEFAULT_ADMIN_CREDENTIALS.email,
+      passwordHash: DEFAULT_ADMIN_CREDENTIALS.passwordHash,
+      name: DEFAULT_ADMIN_CREDENTIALS.name,
+      specialty: DEFAULT_ADMIN_CREDENTIALS.specialty,
+      role: 'admin',
+      active: true,
+      createdAt: Date.now()
+    }
+  ]);
+  if (!admins || admins.length === 0) {
+    writeLocalCollection(STORAGE_KEYS.ADMINS, [
+      {
+        id: DEFAULT_ADMIN_CREDENTIALS.uid,
+        uid: DEFAULT_ADMIN_CREDENTIALS.uid,
+        email: DEFAULT_ADMIN_CREDENTIALS.email,
+        passwordHash: DEFAULT_ADMIN_CREDENTIALS.passwordHash,
+        name: DEFAULT_ADMIN_CREDENTIALS.name,
+        specialty: DEFAULT_ADMIN_CREDENTIALS.specialty,
+        role: 'admin',
+        active: true,
+        createdAt: Date.now()
+      }
+    ]);
   }
 }
 
@@ -204,7 +250,11 @@ export async function getExamSettings() {
       await ensureStudentAuth();
       const snap = await getDoc(doc(db, 'settings', 'exam_config'));
       if (snap.exists()) {
-        const data = { id: snap.id, ...snap.data() };
+        const data = {
+          teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE,
+          ...snap.data(),
+          id: snap.id
+        };
         writeLocalCollection(STORAGE_KEYS.SETTINGS, data);
         return data;
       }
@@ -212,7 +262,10 @@ export async function getExamSettings() {
       console.warn('Fallback to local settings cache:', err.message);
     }
   }
-  return readLocalCollection(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+  return readLocalCollection(STORAGE_KEYS.SETTINGS, {
+    ...INITIAL_SETTINGS,
+    teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE
+  });
 }
 
 /**
@@ -239,7 +292,6 @@ export async function registerParticipant({ documento, fullName, sectionId, emai
     throw new Error('La sección seleccionada no es válida o está inactiva.');
   }
 
-  // Check Cloud Firestore uniqueness index when connected
   if (isFirebaseConfigured && db) {
     try {
       const remoteDocIndex = await getDoc(doc(db, 'participants_by_doc', cleanDoc));
@@ -335,7 +387,6 @@ export async function loginParticipantByDocumento({ documento, sectionId = '' })
 
   const uid = await ensureStudentAuth();
 
-  // Check Cloud Firestore first when connected
   if (isFirebaseConfigured && db) {
     try {
       const idxSnap = await getDoc(doc(db, 'participants_by_doc', cleanDoc));
@@ -390,8 +441,7 @@ export async function loginParticipantByDocumento({ documento, sectionId = '' })
 }
 
 /**
- * Refresh current student dashboard status (attempts count, active attempts, expired check)
- * Notice: NEVER returns scores or answers to the student!
+ * Refresh current student dashboard status
  */
 export async function getStudentDashboardStatus(participantId) {
   await ensureInitialized();
@@ -573,7 +623,6 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
     );
   }
 
-  // Load questions from remote questions_public (without correctOptionId) if connected, or local cache
   let subjectQuestions = [];
   if (isFirebaseConfigured && db) {
     try {
@@ -729,7 +778,6 @@ export async function saveAttemptProgress({ attemptId, selectedAnswers }) {
 
 /**
  * Submit and automatically grade evaluation, storing results in admin-only evaluation_results
- * and hiding scores/correct answers from the student return payload.
  */
 export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {}, reason = 'student_submit' }) {
   if (!attemptId) {
@@ -890,7 +938,6 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
 
   const maxAttempts = Number((await getExamSettings()).maxAttemptsPerSubject) || 3;
 
-  // Notice: Return payload to student contains NO score, NO percentage, and NO correct answers!
   return {
     success: true,
     message: 'Su evaluación ha sido finalizada y enviada correctamente. Los resultados han sido registrados para revisión exclusiva del comité docente.',
@@ -908,15 +955,8 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
 }
 
 // ============================================================================
-// ADMINISTRATOR AUTHENTICATION & AUTHORIZATION
+// ADMINISTRATOR / TEACHER AUTHENTICATION, REGISTRATION & MANAGEMENT
 // ============================================================================
-
-const DEFAULT_ADMIN_CREDENTIALS = {
-  email: 'admin@ciencias10.edu.hn',
-  passwordHash: 'AdminCiencias2026!',
-  name: 'Coordinación Académica de Ciencias Naturales',
-  role: 'admin'
-};
 
 export function getAdminSession() {
   try {
@@ -930,27 +970,59 @@ export function getAdminSession() {
 export async function loginAdmin({ email, password }) {
   const cleanEmail = (email || '').trim().toLowerCase();
   if (!cleanEmail || !password) {
-    throw new Error('Debe ingresar el correo institucional y la contraseña administrativa.');
+    throw new Error('Debe ingresar el correo institucional y la contraseña docente.');
   }
 
+  // 1. Try Firebase Auth + /admins/{uid} when configured
   if (isFirebaseConfigured && auth && db) {
     try {
       const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
       const adminDoc = await getDoc(doc(db, 'admins', cred.user.uid));
-      if (adminDoc.exists() && adminDoc.data().role === 'admin') {
-        const session = {
-          uid: cred.user.uid,
-          email: cred.user.email,
-          name: adminDoc.data().name || 'Administrador Docente',
-          role: 'admin',
-          loggedInAt: Date.now()
-        };
-        sessionStorage.setItem(STORAGE_KEYS.ADMIN_SESSION, JSON.stringify(session));
-        return session;
+      if (adminDoc.exists()) {
+        const adminData = adminDoc.data();
+        if (adminData.active === false) {
+          await fbSignOut(auth);
+          throw new Error('Esta cuenta docente ha sido desactivada por coordinación.');
+        }
+        if (adminData.role === 'admin') {
+          const session = {
+            uid: cred.user.uid,
+            email: cred.user.email,
+            name: adminData.name || 'Docente Evaluador',
+            specialty: adminData.specialty || 'Física y Química',
+            role: 'admin',
+            loggedInAt: Date.now()
+          };
+          sessionStorage.setItem(STORAGE_KEYS.ADMIN_SESSION, JSON.stringify(session));
+          return session;
+        }
       }
     } catch (err) {
+      if (err.message?.includes('desactivada')) throw err;
       console.warn('Firebase Auth admin check notice:', err.message);
     }
+  }
+
+  // 2. Check local registered teachers list or default credentials
+  const localAdmins = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+  const matchedLocal = localAdmins.find(
+    (a) => a.email?.toLowerCase() === cleanEmail && a.passwordHash === password
+  );
+
+  if (matchedLocal) {
+    if (matchedLocal.active === false) {
+      throw new Error('Esta cuenta docente se encuentra inactiva.');
+    }
+    const session = {
+      uid: matchedLocal.uid || matchedLocal.id,
+      email: matchedLocal.email,
+      name: matchedLocal.name,
+      specialty: matchedLocal.specialty || 'Física y Química',
+      role: 'admin',
+      loggedInAt: Date.now()
+    };
+    sessionStorage.setItem(STORAGE_KEYS.ADMIN_SESSION, JSON.stringify(session));
+    return session;
   }
 
   const allowedEmails = (import.meta.env?.VITE_ADMIN_ALLOWED_EMAILS || DEFAULT_ADMIN_CREDENTIALS.email)
@@ -961,18 +1033,11 @@ export async function loginAdmin({ email, password }) {
     (cleanEmail === DEFAULT_ADMIN_CREDENTIALS.email || allowedEmails.includes(cleanEmail)) &&
     password === DEFAULT_ADMIN_CREDENTIALS.passwordHash
   ) {
-    // Also sign in to Firebase Auth in the background if configured so Firestore rules recognize isAdmin()
-    if (isFirebaseConfigured && auth) {
-      try {
-        await signInWithEmailAndPassword(auth, DEFAULT_ADMIN_CREDENTIALS.email, DEFAULT_ADMIN_CREDENTIALS.passwordHash);
-      } catch {
-        // ignore
-      }
-    }
     const session = {
-      uid: auth?.currentUser?.uid || 'admin_master_10mo',
+      uid: DEFAULT_ADMIN_CREDENTIALS.uid,
       email: cleanEmail,
       name: DEFAULT_ADMIN_CREDENTIALS.name,
+      specialty: DEFAULT_ADMIN_CREDENTIALS.specialty,
       role: 'admin',
       loggedInAt: Date.now()
     };
@@ -980,7 +1045,205 @@ export async function loginAdmin({ email, password }) {
     return session;
   }
 
-  throw new Error('Credenciales administrativas inválidas o cuenta sin privilegios de rol administrador.');
+  throw new Error('Credenciales docentes inválidas o cuenta sin privilegios administrativos.');
+}
+
+/**
+ * Register a new Teacher / Admin account.
+ * - When called from the login screen (`autoLogin: true`), verifies the institutional `registrationCode`
+ *   (default: 'DOCENTE-2026') and logs the teacher in immediately.
+ * - When called from inside `/admin/docentes` (`autoLogin: false`), an already-authenticated admin creates
+ *   the new teacher account via Firebase Identity Toolkit REST API without losing their own session.
+ */
+export async function registerTeacherAccount({
+  name,
+  email,
+  password,
+  specialty = 'Física y Química',
+  registrationCode = '',
+  autoLogin = true
+}) {
+  await ensureInitialized();
+  const cleanName = (name || '').trim().replace(/\s+/g, ' ');
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  if (!cleanName || cleanName.length < 4) {
+    throw new Error('Por favor ingrese el nombre y apellido del docente (mínimo 4 caracteres).');
+  }
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new Error('Ingrese un correo electrónico institucional válido.');
+  }
+  if (!password || password.length < 6) {
+    throw new Error('La contraseña debe tener al menos 6 caracteres.');
+  }
+
+  // If self-registering from the login screen, verify the institutional teacher authorization code
+  if (autoLogin) {
+    const settings = await getExamSettings();
+    const expectedCode = (settings.teacherRegistrationCode || DEFAULT_TEACHER_REGISTRATION_CODE).trim().toUpperCase();
+    const providedCode = (registrationCode || '').trim().toUpperCase();
+    if (!providedCode || providedCode !== expectedCode) {
+      throw new Error('El Código de Autorización Docente es inválido. Solicítelo a la Coordinación de Ciencias Naturales.');
+    }
+  } else {
+    assertAdminSession();
+  }
+
+  const localAdmins = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+  if (localAdmins.some((a) => a.email?.toLowerCase() === cleanEmail)) {
+    throw new Error(`El correo ${cleanEmail} ya se encuentra registrado como docente.`);
+  }
+
+  const now = Date.now();
+  let newUid = 'docente_' + now.toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+
+  if (isFirebaseConfigured && auth && db) {
+    try {
+      if (autoLogin) {
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        newUid = cred.user.uid;
+      } else if (firebaseConfig.apiKey) {
+        // Use Identity Toolkit REST API so the current admin session is NOT signed out
+        const signUpRes = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: cleanEmail,
+              password,
+              returnSecureToken: true
+            })
+          }
+        );
+        const signUpData = await signUpRes.json();
+        if (signUpData.error) {
+          if (signUpData.error.message === 'EMAIL_EXISTS') {
+            throw new Error(`El correo ${cleanEmail} ya está registrado en Firebase Authentication.`);
+          }
+          throw new Error(signUpData.error.message);
+        }
+        if (signUpData.localId) {
+          newUid = signUpData.localId;
+        }
+      }
+
+      const firestoreRecord = {
+        uid: newUid,
+        email: cleanEmail,
+        name: cleanName,
+        specialty,
+        role: 'admin',
+        active: true,
+        createdAt: now,
+        updatedAt: now
+      };
+      await setDoc(doc(db, 'admins', newUid), firestoreRecord);
+    } catch (err) {
+      if (err.code === 'auth/email-already-in-use' || err.message?.includes('ya está registrado')) {
+        throw new Error(`El correo ${cleanEmail} ya se encuentra registrado en el sistema.`);
+      }
+      console.warn('Firebase teacher registration notice:', err.message);
+    }
+  }
+
+  const newTeacherRecord = {
+    id: newUid,
+    uid: newUid,
+    email: cleanEmail,
+    passwordHash: password,
+    name: cleanName,
+    specialty,
+    role: 'admin',
+    active: true,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  localAdmins.push(newTeacherRecord);
+  writeLocalCollection(STORAGE_KEYS.ADMINS, localAdmins);
+
+  if (autoLogin) {
+    const session = {
+      uid: newUid,
+      email: cleanEmail,
+      name: cleanName,
+      specialty,
+      role: 'admin',
+      loggedInAt: now
+    };
+    sessionStorage.setItem(STORAGE_KEYS.ADMIN_SESSION, JSON.stringify(session));
+    return session;
+  }
+
+  return newTeacherRecord;
+}
+
+export async function adminGetTeachers() {
+  assertAdminSession();
+  await ensureInitialized();
+
+  if (isFirebaseConfigured && db) {
+    try {
+      const snap = await getDocs(collection(db, 'admins'));
+      if (!snap.empty) {
+        const localAdmins = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+        const map = new Map(localAdmins.map((a) => [a.email?.toLowerCase(), a]));
+        snap.forEach((d) => {
+          const data = d.data();
+          const key = (data.email || d.id).toLowerCase();
+          const existing = map.get(key) || {};
+          map.set(key, {
+            ...existing,
+            ...data,
+            id: d.id,
+            uid: d.id
+          });
+        });
+        const merged = Array.from(map.values());
+        writeLocalCollection(STORAGE_KEYS.ADMINS, merged);
+        return merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      }
+    } catch (e) {
+      console.warn('Firestore adminGetTeachers notice:', e.message);
+    }
+  }
+
+  const list = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+  return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+export async function adminToggleTeacherStatus(teacherUid, active) {
+  assertAdminSession();
+  const list = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+  const idx = list.findIndex((a) => a.uid === teacherUid || a.id === teacherUid);
+  if (idx >= 0) {
+    list[idx].active = Boolean(active);
+    list[idx].updatedAt = Date.now();
+    writeLocalCollection(STORAGE_KEYS.ADMINS, list);
+  }
+  if (isFirebaseConfigured && db) {
+    await updateDoc(doc(db, 'admins', teacherUid), {
+      active: Boolean(active),
+      updatedAt: Date.now()
+    }).catch(() => {});
+  }
+  return true;
+}
+
+export async function adminDeleteTeacher(teacherUid) {
+  const current = assertAdminSession();
+  if (current.uid === teacherUid) {
+    throw new Error('No puede eliminar su propia cuenta docente en sesión activa.');
+  }
+  const list = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+  const filtered = list.filter((a) => a.uid !== teacherUid && a.id !== teacherUid);
+  writeLocalCollection(STORAGE_KEYS.ADMINS, filtered);
+
+  if (isFirebaseConfigured && db) {
+    await deleteDoc(doc(db, 'admins', teacherUid)).catch(() => {});
+  }
+  return true;
 }
 
 export async function logoutAdmin() {
@@ -1041,7 +1304,11 @@ export async function adminGetOverviewData() {
       if (remoteSections.length > 0) writeLocalCollection(STORAGE_KEYS.SECTIONS, remoteSections);
 
       if (setSnap.exists()) {
-        writeLocalCollection(STORAGE_KEYS.SETTINGS, { id: setSnap.id, ...setSnap.data() });
+        writeLocalCollection(STORAGE_KEYS.SETTINGS, {
+          teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE,
+          ...setSnap.data(),
+          id: setSnap.id
+        });
       }
 
       const remoteActiveMap = {};
@@ -1060,7 +1327,10 @@ export async function adminGetOverviewData() {
   const results = readLocalCollection(STORAGE_KEYS.RESULTS, []);
   const questions = readLocalCollection(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS);
   const sections = readLocalCollection(STORAGE_KEYS.SECTIONS, INITIAL_SECTIONS);
-  const settings = readLocalCollection(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+  const settings = readLocalCollection(STORAGE_KEYS.SETTINGS, {
+    ...INITIAL_SETTINGS,
+    teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE
+  });
   const activeAttempts = Object.values(readLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, {})).filter(
     (a) => a.status === 'in_progress' && a.expiresAt > Date.now()
   );
@@ -1076,7 +1346,7 @@ export async function adminGetOverviewData() {
 }
 
 /**
- * Admin CRUD: Questions (Writes full question to /questions and sanitized question to /questions_public)
+ * Admin CRUD: Questions
  */
 export async function adminSaveQuestion(questionData) {
   assertAdminSession();
@@ -1231,7 +1501,10 @@ export async function adminDeleteSection(sectionId) {
  */
 export async function adminSaveSettings(newSettings) {
   assertAdminSession();
-  const current = readLocalCollection(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+  const current = readLocalCollection(STORAGE_KEYS.SETTINGS, {
+    ...INITIAL_SETTINGS,
+    teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE
+  });
   const updated = {
     ...current,
     ...newSettings,
@@ -1239,6 +1512,7 @@ export async function adminSaveSettings(newSettings) {
     questionsPerAttempt: Math.max(1, Math.min(40, Number(newSettings.questionsPerAttempt) || 10)),
     fisicaDurationMinutes: Math.max(5, Math.min(180, Number(newSettings.fisicaDurationMinutes) || 25)),
     quimicaDurationMinutes: Math.max(5, Math.min(180, Number(newSettings.quimicaDurationMinutes) || 25)),
+    teacherRegistrationCode: (newSettings.teacherRegistrationCode || current.teacherRegistrationCode || DEFAULT_TEACHER_REGISTRATION_CODE).trim().toUpperCase(),
     updatedAt: Date.now()
   };
   writeLocalCollection(STORAGE_KEYS.SETTINGS, updated);

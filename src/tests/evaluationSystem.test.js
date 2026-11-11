@@ -9,6 +9,8 @@ import {
   submitEvaluationAttempt,
   loginAdmin,
   logoutAdmin,
+  registerTeacherAccount,
+  adminGetTeachers,
   adminGetOverviewData,
   adminSaveQuestion
 } from '../services/evaluationService';
@@ -36,7 +38,6 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     expect(p1.documento).toBe('0801201000111');
     expect(p1.attemptsCount).toEqual({ fisica: 0, quimica: 0 });
 
-    // Intentar registrar el mismo documento con distinto formato debe fallar
     await expect(
       registerParticipant({
         documento: '0801201000111',
@@ -45,7 +46,6 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
       })
     ).rejects.toThrow(/ya se encuentra registrado/i);
 
-    // Recuperar sesión existente por documento
     const recovered = await loginParticipantByDocumento({ documento: '0801-2010-00111' });
     expect(recovered.id).toBe(p1.id);
   });
@@ -65,7 +65,6 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     expect(evalRes.resumed).toBe(false);
     expect(evalRes.attempt.questions.length).toBe(10);
 
-    // Ninguna pregunta entregada al cliente del estudiante debe incluir correctOptionId ni explanation
     evalRes.attempt.questions.forEach((q) => {
       expect(q.correctOptionId).toBeUndefined();
       expect(q.explanation).toBeUndefined();
@@ -91,7 +90,6 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
       selectedAnswers: { [firstQuestionId]: 'a' }
     });
 
-    // Simular recarga / interrupción: volver a llamar startOrResumeEvaluation recupera el mismo intento
     const resumed = await startOrResumeEvaluation({
       participantId: student.id,
       subject: 'quimica'
@@ -101,19 +99,16 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     expect(resumed.attempt.attemptId).toBe(started.attempt.attemptId);
     expect(resumed.attempt.selectedAnswers[firstQuestionId]).toBe('a');
 
-    // Finalizar evaluación
     const submitRes = await submitEvaluationAttempt({
       attemptId: started.attempt.attemptId,
       selectedAnswers: { [firstQuestionId]: 'a' }
     });
 
     expect(submitRes.success).toBe(true);
-    // El estudiante NO recibe score ni percentage en el comprobante
     expect(submitRes.summary.score).toBeUndefined();
     expect(submitRes.summary.percentage).toBeUndefined();
     expect(submitRes.summary.remainingAttempts).toBe(2);
 
-    // Una evaluación finalizada no puede modificarse ni enviarse de nuevo
     await expect(
       saveAttemptProgress({
         attemptId: started.attempt.attemptId,
@@ -141,7 +136,6 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
       });
     }
 
-    // El 4to intento en Física debe ser rechazado
     await expect(
       startOrResumeEvaluation({
         participantId: student.id,
@@ -149,7 +143,6 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
       })
     ).rejects.toThrow(/límite máximo de 3 intentos/i);
 
-    // Pero Química sigue teniendo sus 3 intentos independientes disponibles
     const quimicaAttempt = await startOrResumeEvaluation({
       participantId: student.id,
       subject: 'quimica'
@@ -158,11 +151,9 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
   });
 
   it('6. Protege el panel administrativo y permite consultar calificaciones reales y gestionar preguntas', async () => {
-    // Sin sesión de admin debe rechazar el acceso
     await logoutAdmin();
     await expect(adminGetOverviewData()).rejects.toThrow(/Acceso denegado/i);
 
-    // Iniciar sesión como admin
     const adminSession = await loginAdmin({
       email: 'admin@ciencias10.edu.hn',
       password: 'AdminCiencias2026!'
@@ -172,7 +163,6 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     const overview = await adminGetOverviewData();
     expect(overview.questions.length).toBe(40);
 
-    // Agregar nueva pregunta desde el panel admin
     const newQ = await adminSaveQuestion({
       subject: 'fisica',
       topic: 'Óptica Geométrica',
@@ -193,5 +183,52 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     const updatedOverview = await adminGetOverviewData();
     expect(updatedOverview.questions.length).toBe(41);
   });
-});
 
+  it('7. Permite registrar múltiples accesos docentes con código institucional y gestionarlos desde /admin/docentes', async () => {
+    await logoutAdmin();
+
+    // Rechazar autoregistro con código institucional incorrecto
+    await expect(
+      registerTeacherAccount({
+        name: 'Prof. Intruso',
+        email: 'intruso@colegio.edu',
+        password: 'Password123!',
+        specialty: 'Física',
+        registrationCode: 'CODIGO-FALSO',
+        autoLogin: true
+      })
+    ).rejects.toThrow(/Código de Autorización Docente es inválido/i);
+
+    // Permitir autoregistro con código institucional válido (DOCENTE-2026)
+    const session = await registerTeacherAccount({
+      name: 'Lic. Roberto Mendoza',
+      email: 'roberto.mendoza@ciencias10.edu.hn',
+      password: 'FisicaDocente2026!',
+      specialty: 'Física',
+      registrationCode: 'DOCENTE-2026',
+      autoLogin: true
+    });
+    expect(session.email).toBe('roberto.mendoza@ciencias10.edu.hn');
+    expect(session.role).toBe('admin');
+
+    // Desde sesión activa, registrar otro docente adicional sin perder sesión
+    await registerTeacherAccount({
+      name: 'MSc. Claudia Reyes',
+      email: 'claudia.reyes@ciencias10.edu.hn',
+      password: 'QuimicaDocente2026!',
+      specialty: 'Química',
+      autoLogin: false
+    });
+
+    const allTeachers = await adminGetTeachers();
+    expect(allTeachers.length).toBeGreaterThanOrEqual(3);
+
+    // Verificar que el nuevo docente puede iniciar sesión
+    await logoutAdmin();
+    const claudiaSession = await loginAdmin({
+      email: 'claudia.reyes@ciencias10.edu.hn',
+      password: 'QuimicaDocente2026!'
+    });
+    expect(claudiaSession.name).toBe('MSc. Claudia Reyes');
+  });
+});

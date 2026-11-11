@@ -10,9 +10,14 @@ rules_version = '2';
 // Document ID: {adminUid}
 // Fields:
 //   - role: string (required, == 'admin') - Administrator role identifier
-//   - email: string (optional, <= 254 chars) - Admin email
+//   - email: string (required, 3..200 chars) - Admin email
 //   - name: string (optional, <= 120 chars) - Admin display name
+//   - specialty: string (optional, <= 100 chars) - Teacher specialty (e.g., Física, Química, Ambas)
+//   - active: bool (optional) - Whether the admin/teacher account is active
+//   - uid: string (optional, <= 128 chars) - Admin Firebase Auth UID
+//   - ownerEmail: string (optional, <= 254 chars) - Bootstrap/owner email reference
 //   - createdAt: timestamp | int (optional, immutable) - Creation timestamp
+//   - updatedAt: timestamp | int (optional) - Last update timestamp
 //
 // Collection: sections
 // Document ID: {sectionId}
@@ -132,7 +137,9 @@ service cloud.firestore {
         request.auth.token.admin == true ||
         (
           exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin'
+          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin' &&
+          (!('active' in get(/databases/$(database)/documents/admins/$(request.auth.uid)).data) ||
+           get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active != false)
         )
       );
     }
@@ -162,11 +169,15 @@ service cloud.firestore {
 
     // Validate admin document
     function isValidAdmin(data) {
-      return hasRequiredFields(['role']) &&
+      return hasRequiredFields(['role', 'email']) &&
         data.role is string &&
         data.role == 'admin' &&
-        validOptionalString(data, 'email', 254) &&
-        validOptionalString(data, 'name', 120);
+        validString(data, 'email', 3, 200) &&
+        validOptionalString(data, 'name', 120) &&
+        validOptionalString(data, 'specialty', 100) &&
+        validOptionalString(data, 'uid', 128) &&
+        validOptionalString(data, 'ownerEmail', 254) &&
+        (!('active' in data) || data.active is bool);
     }
 
     // Validate section schema for /sections/{sectionId}
@@ -267,8 +278,8 @@ service cloud.firestore {
     match /admins/{adminUid} {
       allow get: if isAuthenticated() && (request.auth.uid == adminUid || isAdmin());
       allow list: if isAdmin();
-      allow create, update: if isAdmin() && isValidAdmin(request.resource.data);
-      allow delete: if isAdmin();
+      allow create: if (isAdmin() || (isAuthenticated() && request.auth.uid == adminUid)) && isValidAdmin(request.resource.data);
+      allow update, delete: if isAdmin();
     }
 
     // 2. Course Sections (/sections/{sectionId})
