@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   UserPlus,
-  UserCog,
-  Mail,
   ShieldCheck,
   CheckCircle2,
   XCircle,
   Trash2,
-  KeyRound,
   GraduationCap,
   Search
 } from 'lucide-react';
@@ -18,15 +15,12 @@ import {
   registerTeacherAccount,
   adminToggleTeacherStatus,
   adminDeleteTeacher,
-  getExamSettings,
-  adminSaveSettings,
   getAdminSession
 } from '../../services/evaluationService';
 import { formatDateTime } from '../../utils/reportExporter';
 
 export default function AdminDocentesPage() {
   const [teachers, setTeachers] = useState([]);
-  const [settings, setSettings] = useState(null);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -40,12 +34,11 @@ export default function AdminDocentesPage() {
 
   const currentAdmin = getAdminSession();
 
-  const loadTeachersAndSettings = useCallback(async () => {
+  const loadTeachers = useCallback(async () => {
     try {
       setLoading(true);
-      const [list, cfg] = await Promise.all([adminGetTeachers(), getExamSettings()]);
+      const list = await adminGetTeachers();
       setTeachers(list);
-      setSettings(cfg);
     } catch (err) {
       console.error(err);
     } finally {
@@ -54,8 +47,8 @@ export default function AdminDocentesPage() {
   }, []);
 
   useEffect(() => {
-    loadTeachersAndSettings();
-  }, [loadTeachersAndSettings]);
+    loadTeachers();
+  }, [loadTeachers]);
 
   const handleCreateTeacher = async (e) => {
     e.preventDefault();
@@ -66,7 +59,7 @@ export default function AdminDocentesPage() {
       });
       setModalOpen(false);
       setNewTeacher({ name: '', email: '', specialty: 'Física y Química', password: '' });
-      await loadTeachersAndSettings();
+      await loadTeachers();
       await Swal.fire({
         title: 'Docente Registrado',
         text: 'El nuevo acceso docente ha sido creado en Firebase y habilitado inmediatamente.',
@@ -90,7 +83,7 @@ export default function AdminDocentesPage() {
   const handleToggleActive = async (teacher) => {
     const nextState = teacher.active === false;
     await adminToggleTeacherStatus(teacher.uid || teacher.id, nextState);
-    await loadTeachersAndSettings();
+    await loadTeachers();
   };
 
   const handleDelete = async (teacher) => {
@@ -109,7 +102,7 @@ export default function AdminDocentesPage() {
     if (res.isConfirmed) {
       try {
         await adminDeleteTeacher(teacher.uid || teacher.id);
-        await loadTeachersAndSettings();
+        await loadTeachers();
       } catch (err) {
         Swal.fire({
           title: 'Acción no permitida',
@@ -119,32 +112,6 @@ export default function AdminDocentesPage() {
           color: '#f8fafc'
         });
       }
-    }
-  };
-
-  const handleSaveRegCode = async (e) => {
-    e.preventDefault();
-    if (!settings) return;
-    try {
-      const updated = await adminSaveSettings(settings);
-      setSettings(updated);
-      Swal.fire({
-        title: 'Código de Registro Docente Actualizado',
-        text: `Nuevo código institucional: ${updated.teacherRegistrationCode}`,
-        icon: 'success',
-        timer: 1500,
-        showConfirmButton: false,
-        background: '#0f172a',
-        color: '#f8fafc'
-      });
-    } catch (err) {
-      Swal.fire({
-        title: 'Error',
-        text: err.message,
-        icon: 'error',
-        background: '#0f172a',
-        color: '#f8fafc'
-      });
     }
   };
 
@@ -162,7 +129,7 @@ export default function AdminDocentesPage() {
         <div>
           <h1 className="text-2xl font-extrabold text-white">Gestión de Accesos Docentes</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Registre nuevos profesores de Física y Química, administre permisos y configure el código institucional de alta docente.
+            Registre nuevos profesores de Física y Química y administre los accesos activos del personal docente.
           </p>
         </div>
 
@@ -174,41 +141,6 @@ export default function AdminDocentesPage() {
           <span>Registrar Nuevo Docente</span>
         </button>
       </div>
-
-      {/* Institutional Teacher Registration Code Card */}
-      {settings && (
-        <div className="mb-8 rounded-2xl border border-emerald-500/30 bg-emerald-950/15 p-5">
-          <form onSubmit={handleSaveRegCode} className="flex flex-wrap items-center justify-between gap-4">
-            <div className="max-w-xl">
-              <div className="flex items-center gap-2 text-sm font-bold text-emerald-300">
-                <KeyRound className="h-4 w-4" />
-                <span>Código Institucional para Autoregistro de Docentes</span>
-              </div>
-              <p className="mt-1 text-xs text-slate-300">
-                Los profesores también pueden crear su propia cuenta desde la pestaña <strong>"Registrar Nuevo Docente"</strong> en la pantalla de inicio de sesión ingresando este código de seguridad.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2.5">
-              <input
-                type="text"
-                required
-                value={settings.teacherRegistrationCode || 'DOCENTE-2026'}
-                onChange={(e) =>
-                  setSettings({ ...settings, teacherRegistrationCode: e.target.value.toUpperCase() })
-                }
-                className="rounded-xl border border-emerald-500/40 bg-slate-950 px-3.5 py-2 font-mono text-sm font-bold text-emerald-300"
-              />
-              <button
-                type="submit"
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 cursor-pointer"
-              >
-                Actualizar Código
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* Search Bar */}
       <div className="mb-5 relative max-w-md">
@@ -229,7 +161,7 @@ export default function AdminDocentesPage() {
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/80 text-xs font-bold uppercase text-slate-400">
                 <th className="px-4 py-3.5">Nombre del Docente</th>
-                <th className="px-4 py-3.5">Correo Institucional</th>
+                <th className="px-4 py-3.5">Correo Electrónico</th>
                 <th className="px-4 py-3.5">Cátedra / Especialidad</th>
                 <th className="px-4 py-3.5">Estado</th>
                 <th className="px-4 py-3.5">Fecha de Registro</th>
@@ -246,7 +178,7 @@ export default function AdminDocentesPage() {
               ) : filteredTeachers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                    No se encontraron docentes con ese criterio.
+                    No hay otros docentes registrados aún. Utilice el botón "Registrar Nuevo Docente".
                   </td>
                 </tr>
               ) : (
@@ -320,7 +252,7 @@ export default function AdminDocentesPage() {
           <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
             <h3 className="text-lg font-extrabold text-white">Registrar Nuevo Acceso Docente</h3>
             <p className="mt-1 text-xs text-slate-400">
-              Cree una cuenta administrativa para otro profesor de Física o Química sin cerrar su sesión actual.
+              Cree una cuenta administrativa para un profesor de Física o Química sin cerrar su sesión actual.
             </p>
 
             <form onSubmit={handleCreateTeacher} className="mt-4 space-y-4 text-sm">
@@ -340,12 +272,12 @@ export default function AdminDocentesPage() {
 
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-300 mb-1">
-                  Correo Institucional *
+                  Correo Electrónico *
                 </label>
                 <input
                   type="email"
                   required
-                  placeholder="claudia.reyes@institucion.edu.hn"
+                  placeholder="correo@ejemplo.com"
                   value={newTeacher.email}
                   onChange={(e) => setNewTeacher({ ...newTeacher, email: e.target.value })}
                   className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-white"
@@ -364,13 +296,12 @@ export default function AdminDocentesPage() {
                   <option value="Física y Química">Física y Química</option>
                   <option value="Física">Física</option>
                   <option value="Química">Química</option>
-                  <option value="Coordinación Académica">Coordinación Académica</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-300 mb-1">
-                  Contraseña Temporal / Inicial (mín. 6 caracteres) *
+                  Contraseña (mín. 6 caracteres) *
                 </label>
                 <input
                   type="password"
@@ -405,4 +336,3 @@ export default function AdminDocentesPage() {
     </AdminLayout>
   );
 }
-

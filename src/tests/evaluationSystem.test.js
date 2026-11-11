@@ -22,17 +22,17 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     await ensureInitialized();
   });
 
-  it('1. Inicializa el banco oficial de 40 preguntas (20 Física y 20 Química) y 4 secciones de Décimo Grado', async () => {
+  it('1. Inicializa el banco oficial de 40 preguntas (20 Física y 20 Química) y 2 secciones de Décimo Grado (Décimo - 1 y Décimo - 2)', async () => {
     const sections = await getActiveSections();
-    expect(sections.length).toBe(4);
-    expect(sections.map((s) => s.code)).toEqual(['10-A', '10-B', '10-C', '10-D']);
+    expect(sections.length).toBe(2);
+    expect(sections.map((s) => s.code)).toEqual(['Décimo - 1', 'Décimo - 2']);
   });
 
   it('2. Registra participantes y previene duplicados por número de documento', async () => {
     const p1 = await registerParticipant({
       documento: '0801-2010-00111',
       fullName: 'Carlos Eduardo Mejía',
-      sectionId: 'sec-10a',
+      sectionId: 'sec-10-1',
       email: 'carlos@colegio.edu'
     });
     expect(p1.documento).toBe('0801201000111');
@@ -42,7 +42,7 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
       registerParticipant({
         documento: '0801201000111',
         fullName: 'Otro Estudiante',
-        sectionId: 'sec-10b'
+        sectionId: 'sec-10-2'
       })
     ).rejects.toThrow(/ya se encuentra registrado/i);
 
@@ -54,7 +54,7 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     const student = await registerParticipant({
       documento: '0801-2010-00222',
       fullName: 'Ana Sofía Valladares',
-      sectionId: 'sec-10b'
+      sectionId: 'sec-10-2'
     });
 
     const evalRes = await startOrResumeEvaluation({
@@ -76,7 +76,7 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     const student = await registerParticipant({
       documento: '0801-2010-00333',
       fullName: 'Diego Alejandro Paz',
-      sectionId: 'sec-10c'
+      sectionId: 'sec-10-1'
     });
 
     const started = await startOrResumeEvaluation({
@@ -121,7 +121,7 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     const student = await registerParticipant({
       documento: '0801-2010-00444',
       fullName: 'Lucía Gabriela Flores',
-      sectionId: 'sec-10d'
+      sectionId: 'sec-10-2'
     });
 
     for (let i = 1; i <= 3; i++) {
@@ -199,13 +199,12 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
       })
     ).rejects.toThrow(/Código de Autorización Docente es inválido/i);
 
-    // Permitir autoregistro con código institucional válido (DOCENTE-2026)
+    // Permitir autoregistro directo sin exponer credenciales de coordinación principal
     const session = await registerTeacherAccount({
       name: 'Lic. Roberto Mendoza',
       email: 'roberto.mendoza@ciencias10.edu.hn',
       password: 'FisicaDocente2026!',
       specialty: 'Física',
-      registrationCode: 'DOCENTE-2026',
       autoLogin: true
     });
     expect(session.email).toBe('roberto.mendoza@ciencias10.edu.hn');
@@ -221,7 +220,8 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     });
 
     const allTeachers = await adminGetTeachers();
-    expect(allTeachers.length).toBeGreaterThanOrEqual(3);
+    expect(allTeachers.length).toBe(2);
+    expect(allTeachers.some((t) => t.email === 'admin@ciencias10.edu.hn')).toBe(false);
 
     // Verificar que el nuevo docente puede iniciar sesión
     await logoutAdmin();

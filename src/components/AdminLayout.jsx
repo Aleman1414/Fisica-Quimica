@@ -16,7 +16,6 @@ import {
   KeyRound,
   User,
   GraduationCap,
-  Shield,
   ArrowRight
 } from 'lucide-react';
 import Swal from 'sweetalert2';
@@ -24,8 +23,7 @@ import {
   getAdminSession,
   loginAdmin,
   registerTeacherAccount,
-  logoutAdmin,
-  DEFAULT_TEACHER_REGISTRATION_CODE
+  logoutAdmin
 } from '../services/evaluationService';
 
 const ADMIN_NAV = [
@@ -54,8 +52,7 @@ export default function AdminLayout({ children }) {
     email: '',
     specialty: 'Física y Química',
     password: '',
-    confirmPassword: '',
-    registrationCode: ''
+    confirmPassword: ''
   });
 
   const handleLogin = async (e) => {
@@ -108,7 +105,6 @@ export default function AdminLayout({ children }) {
         email: regForm.email,
         password: regForm.password,
         specialty: regForm.specialty,
-        registrationCode: regForm.registrationCode,
         autoLogin: true
       });
       setAdmin(session);
@@ -152,7 +148,7 @@ export default function AdminLayout({ children }) {
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white">Portal de Acceso Docente</h1>
             <p className="mt-1.5 text-xs sm:text-sm text-slate-400">
-              Inicie sesión con su cuenta docente o registre un nuevo acceso para administrar evaluaciones de Física y Química.
+              Inicie sesión con su cuenta docente o registre un nuevo acceso para administrar las evaluaciones de Física y Química.
             </p>
           </div>
 
@@ -198,7 +194,7 @@ export default function AdminLayout({ children }) {
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="docente@institucion.edu.hn"
+                      placeholder="Ingrese su correo electrónico"
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-4 py-3 text-sm text-white focus:border-emerald-500 focus:outline-none"
                     />
                   </div>
@@ -218,25 +214,6 @@ export default function AdminLayout({ children }) {
                       placeholder="Ingrese su contraseña"
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-4 py-3 text-sm text-white focus:border-emerald-500 focus:outline-none"
                     />
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-800 bg-slate-950/90 p-3 text-xs text-slate-400">
-                  <div className="flex items-center justify-between">
-                    <span>Cuenta de Coordinación Principal:</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEmail('admin@ciencias10.edu.hn');
-                        setPassword('AdminCiencias2026!');
-                      }}
-                      className="text-emerald-400 font-semibold hover:underline cursor-pointer"
-                    >
-                      Autocompletar Coordinación
-                    </button>
-                  </div>
-                  <div className="mt-1 font-mono text-[11px] text-slate-300">
-                    admin@ciencias10.edu.hn | Clave: AdminCiencias2026!
                   </div>
                 </div>
 
@@ -272,14 +249,14 @@ export default function AdminLayout({ children }) {
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                      Correo Institucional *
+                      Correo Electrónico *
                     </label>
                     <div className="relative">
                       <Mail className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
                       <input
                         type="email"
                         required
-                        placeholder="docente@colegio.edu"
+                        placeholder="correo@ejemplo.com"
                         value={regForm.email}
                         onChange={(e) => setRegForm({ ...regForm, email: e.target.value })}
                         className="w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-3 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
@@ -301,7 +278,6 @@ export default function AdminLayout({ children }) {
                         <option value="Física y Química">Física y Química</option>
                         <option value="Física">Física</option>
                         <option value="Química">Química</option>
-                        <option value="Coordinación Académica">Coordinación Académica</option>
                       </select>
                     </div>
                   </div>
@@ -335,33 +311,6 @@ export default function AdminLayout({ children }) {
                       onChange={(e) => setRegForm({ ...regForm, confirmPassword: e.target.value })}
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
                     />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-emerald-300 mb-1.5">
-                    Código Institucional de Autorización Docente *
-                  </label>
-                  <div className="relative">
-                    <Shield className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-emerald-400" />
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ej. DOCENTE-2026"
-                      value={regForm.registrationCode}
-                      onChange={(e) => setRegForm({ ...regForm, registrationCode: e.target.value })}
-                      className="w-full rounded-xl border border-emerald-500/40 bg-slate-950 pl-10 pr-4 py-2.5 text-sm font-mono text-white focus:border-emerald-500 focus:outline-none"
-                    />
-                  </div>
-                  <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-400">
-                    <span>Evita que estudiantes se registren como docentes.</span>
-                    <button
-                      type="button"
-                      onClick={() => setRegForm({ ...regForm, registrationCode: DEFAULT_TEACHER_REGISTRATION_CODE })}
-                      className="text-emerald-400 font-semibold hover:underline cursor-pointer"
-                    >
-                      Usar código actual ({DEFAULT_TEACHER_REGISTRATION_CODE})
-                    </button>
                   </div>
                 </div>
 

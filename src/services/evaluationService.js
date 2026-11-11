@@ -19,7 +19,7 @@ import { auth, db, isFirebaseConfigured, firebaseConfig } from '../lib/firebase'
 import { INITIAL_QUESTIONS, INITIAL_SECTIONS, INITIAL_SETTINGS } from '../data/initialQuestions';
 
 const STORAGE_KEYS = {
-  SECTIONS: 'eval10_sections_v1',
+  SECTIONS: 'eval10_sections_v2',
   SETTINGS: 'eval10_settings_v1',
   QUESTIONS: 'eval10_questions_v1',
   PARTICIPANTS: 'eval10_participants_v1',
@@ -27,7 +27,7 @@ const STORAGE_KEYS = {
   ACTIVE_ATTEMPTS: 'eval10_active_attempts_v1',
   ATTEMPT_SECRETS: 'eval10_attempt_secrets_v1',
   RESULTS: 'eval10_evaluation_results_v1',
-  ADMINS: 'eval10_admins_v1',
+  ADMINS: 'eval10_admins_v2',
   STUDENT_SESSION: 'eval10_student_session_v1',
   ADMIN_SESSION: 'eval10_admin_session_v1'
 };
@@ -122,33 +122,9 @@ export async function ensureInitialized() {
       teacherRegistrationCode: DEFAULT_TEACHER_REGISTRATION_CODE
     });
   }
-  const admins = readLocalCollection(STORAGE_KEYS.ADMINS, [
-    {
-      id: DEFAULT_ADMIN_CREDENTIALS.uid,
-      uid: DEFAULT_ADMIN_CREDENTIALS.uid,
-      email: DEFAULT_ADMIN_CREDENTIALS.email,
-      passwordHash: DEFAULT_ADMIN_CREDENTIALS.passwordHash,
-      name: DEFAULT_ADMIN_CREDENTIALS.name,
-      specialty: DEFAULT_ADMIN_CREDENTIALS.specialty,
-      role: 'admin',
-      active: true,
-      createdAt: Date.now()
-    }
-  ]);
-  if (!admins || admins.length === 0) {
-    writeLocalCollection(STORAGE_KEYS.ADMINS, [
-      {
-        id: DEFAULT_ADMIN_CREDENTIALS.uid,
-        uid: DEFAULT_ADMIN_CREDENTIALS.uid,
-        email: DEFAULT_ADMIN_CREDENTIALS.email,
-        passwordHash: DEFAULT_ADMIN_CREDENTIALS.passwordHash,
-        name: DEFAULT_ADMIN_CREDENTIALS.name,
-        specialty: DEFAULT_ADMIN_CREDENTIALS.specialty,
-        role: 'admin',
-        active: true,
-        createdAt: Date.now()
-      }
-    ]);
+  const admins = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+  if (!Array.isArray(admins)) {
+    writeLocalCollection(STORAGE_KEYS.ADMINS, []);
   }
 }
 
@@ -1077,15 +1053,15 @@ export async function registerTeacherAccount({
     throw new Error('La contraseña debe tener al menos 6 caracteres.');
   }
 
-  // If self-registering from the login screen, verify the institutional teacher authorization code
-  if (autoLogin) {
+  // If an explicit registrationCode is provided during self-registration, verify it
+  if (autoLogin && registrationCode) {
     const settings = await getExamSettings();
     const expectedCode = (settings.teacherRegistrationCode || DEFAULT_TEACHER_REGISTRATION_CODE).trim().toUpperCase();
     const providedCode = (registrationCode || '').trim().toUpperCase();
-    if (!providedCode || providedCode !== expectedCode) {
+    if (providedCode !== expectedCode) {
       throw new Error('El Código de Autorización Docente es inválido. Solicítelo a la Coordinación de Ciencias Naturales.');
     }
-  } else {
+  } else if (!autoLogin) {
     assertAdminSession();
   }
 
@@ -1200,7 +1176,9 @@ export async function adminGetTeachers() {
             uid: d.id
           });
         });
-        const merged = Array.from(map.values());
+        const merged = Array.from(map.values()).filter(
+          (a) => a.email?.toLowerCase() !== DEFAULT_ADMIN_CREDENTIALS.email
+        );
         writeLocalCollection(STORAGE_KEYS.ADMINS, merged);
         return merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       }
@@ -1209,7 +1187,9 @@ export async function adminGetTeachers() {
     }
   }
 
-  const list = readLocalCollection(STORAGE_KEYS.ADMINS, []);
+  const list = readLocalCollection(STORAGE_KEYS.ADMINS, []).filter(
+    (a) => a.email?.toLowerCase() !== DEFAULT_ADMIN_CREDENTIALS.email
+  );
   return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
@@ -1454,7 +1434,7 @@ export async function adminRestoreInitialQuestions() {
 export async function adminSaveSection(sectionData) {
   assertAdminSession();
   const sections = readLocalCollection(STORAGE_KEYS.SECTIONS, INITIAL_SECTIONS);
-  const code = (sectionData.code || '').trim().toUpperCase();
+  const code = (sectionData.code || '').trim();
   const name = (sectionData.name || '').trim();
 
   if (!code || !name) {
