@@ -1,9 +1,7 @@
 import {
   signInAnonymously,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut as fbSignOut,
-  onAuthStateChanged
+  signOut as fbSignOut
 } from 'firebase/auth';
 import {
   collection,
@@ -13,11 +11,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
-  query,
-  where,
-  runTransaction,
-  serverTimestamp,
-  Timestamp
+  runTransaction
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import axios from 'axios';
@@ -38,7 +32,6 @@ const STORAGE_KEYS = {
   ADMIN_SESSION: 'eval10_admin_session_v1'
 };
 
-// Axios instance for optional external/webhook or REST Function verification
 export const apiClient = axios.create({
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' }
@@ -120,11 +113,15 @@ ensureInitialized();
  */
 async function ensureStudentAuth() {
   if (isFirebaseConfigured && auth) {
-    if (!auth.currentUser) {
-      const cred = await signInAnonymously(auth);
-      return cred.user.uid;
+    try {
+      if (!auth.currentUser) {
+        const cred = await signInAnonymously(auth);
+        return cred.user.uid;
+      }
+      return auth.currentUser.uid;
+    } catch (e) {
+      console.warn('Anonymous auth fallback:', e.message);
     }
-    return auth.currentUser.uid;
   }
   let localUid = sessionStorage.getItem('eval10_anon_uid');
   if (!localUid) {
@@ -152,7 +149,6 @@ export function saveStudentSession(participant) {
     localStorage.removeItem(STORAGE_KEYS.STUDENT_SESSION);
     return;
   }
-  // Never store scores in student session
   const safeParticipant = {
     id: participant.id,
     uid: participant.uid,
@@ -236,29 +232,25 @@ export async function registerParticipant({ documento, fullName, sectionId, emai
     throw new Error('Debe seleccionar su sección de Décimo Grado.');
   }
 
-  // Try Firebase Cloud Function first when configured
-  if (isFirebaseConfigured && functions) {
-    try {
-      await ensureStudentAuth();
-      const callRegister = httpsCallable(functions, 'registerParticipant');
-      const res = await callRegister({ documento, fullName: cleanName, sectionId, email, phone });
-      if (res?.data?.participant) {
-        saveStudentSession(res.data.participant);
-        return res.data.participant;
-      }
-    } catch (err) {
-      if (err.code === 'functions/already-exists' || err.message?.includes('ya se encuentra registrado')) {
-        throw new Error(err.message);
-      }
-      console.warn('Cloud Function registerParticipant fallback:', err.message);
-    }
-  }
-
   const uid = await ensureStudentAuth();
-  const sections = readLocalCollection(STORAGE_KEYS.SECTIONS, INITIAL_SECTIONS);
+  const sections = await getActiveSections();
   const section = sections.find((s) => s.id === sectionId && s.active !== false);
   if (!section) {
     throw new Error('La sección seleccionada no es válida o está inactiva.');
+  }
+
+  // Check Cloud Firestore uniqueness index when connected
+  if (isFirebaseConfigured && db) {
+    try {
+      const remoteDocIndex = await getDoc(doc(db, 'participants_by_doc', cleanDoc));
+      if (remoteDocIndex.exists()) {
+        throw new Error(
+          `El documento/carnet "${cleanDoc}" ya se encuentra registrado en el sistema. Si usted ya se registró anteriormente, utilice la pestaña "Ya estoy registrado" para continuar sus evaluaciones.`
+        );
+      }
+    } catch (err) {
+      if (err.message?.includes('ya se encuentra registrado')) throw err;
+    }
   }
 
   const docIndex = readLocalCollection(STORAGE_KEYS.PARTICIPANTS_BY_DOC, {});
@@ -295,13 +287,34 @@ export async function registerParticipant({ documento, fullName, sectionId, emai
     updatedAt: now
   };
 
-  docIndex[cleanDoc] = {
+  const docIndexEntry = {
     documento: cleanDoc,
     participantId: newParticipant.id,
     uid,
     fullName: cleanName,
     createdAt: now
   };
+
+  if (isFirebaseConfigured && db) {
+    try {
+      await runTransaction(db, async (tx) => {
+        const idxRef = doc(db, 'participants_by_doc', cleanDoc);
+        const idxSnap = await tx.get(idxRef);
+        if (idxSnap.exists()) {
+          throw new Error(
+            `El documento/carnet "${cleanDoc}" ya se encuentra registrado en el sistema.`
+          );
+        }
+        tx.set(doc(db, 'participants', newParticipant.id), newParticipant);
+        tx.set(idxRef, docIndexEntry);
+      });
+    } catch (err) {
+      if (err.message?.includes('ya se encuentra registrado')) throw err;
+      console.warn('Firestore registerParticipant sync notice:', err.message);
+    }
+  }
+
+  docIndex[cleanDoc] = docIndexEntry;
   participants.push(newParticipant);
 
   writeLocalCollection(STORAGE_KEYS.PARTICIPANTS_BY_DOC, docIndex);
@@ -320,20 +333,39 @@ export async function loginParticipantByDocumento({ documento, sectionId = '' })
     throw new Error('Ingrese un número de documento o carnet estudiantil válido.');
   }
 
-  if (isFirebaseConfigured && functions) {
+  const uid = await ensureStudentAuth();
+
+  // Check Cloud Firestore first when connected
+  if (isFirebaseConfigured && db) {
     try {
-      await ensureStudentAuth();
-      const callLogin = httpsCallable(functions, 'loginParticipant');
-      const res = await callLogin({ documento, sectionId });
-      if (res?.data?.participant) {
-        saveStudentSession(res.data.participant);
-        return res.data.participant;
+      const idxSnap = await getDoc(doc(db, 'participants_by_doc', cleanDoc));
+      if (idxSnap.exists()) {
+        const { participantId } = idxSnap.data();
+        const partSnap = await getDoc(doc(db, 'participants', participantId));
+        if (partSnap.exists()) {
+          const remotePart = { id: partSnap.id, ...partSnap.data() };
+          if (sectionId && remotePart.sectionId !== sectionId) {
+            throw new Error('La sección seleccionada no coincide con la sección registrada para este documento.');
+          }
+          remotePart.uid = uid;
+          remotePart.updatedAt = Date.now();
+          await updateDoc(doc(db, 'participants', participantId), {
+            uid,
+            updatedAt: remotePart.updatedAt
+          }).catch(() => {});
+
+          const participants = readLocalCollection(STORAGE_KEYS.PARTICIPANTS, []);
+          const localIdx = participants.findIndex((p) => p.id === remotePart.id);
+          if (localIdx >= 0) participants[localIdx] = remotePart;
+          else participants.push(remotePart);
+          writeLocalCollection(STORAGE_KEYS.PARTICIPANTS, participants);
+          saveStudentSession(remotePart);
+          return remotePart;
+        }
       }
     } catch (err) {
-      if (err.code === 'functions/not-found' || err.code === 'functions/permission-denied') {
-        throw new Error(err.message);
-      }
-      console.warn('Cloud Function loginParticipant fallback:', err.message);
+      if (err.message?.includes('no coincide')) throw err;
+      console.warn('Firestore loginParticipant notice:', err.message);
     }
   }
 
@@ -348,7 +380,6 @@ export async function loginParticipantByDocumento({ documento, sectionId = '' })
     throw new Error('La sección seleccionada no coincide con la sección registrada para este documento.');
   }
 
-  const uid = await ensureStudentAuth();
   participant.uid = uid;
   participant.updatedAt = Date.now();
   participants[idx] = participant;
@@ -365,6 +396,36 @@ export async function loginParticipantByDocumento({ documento, sectionId = '' })
 export async function getStudentDashboardStatus(participantId) {
   await ensureInitialized();
   const settings = await getExamSettings();
+
+  if (isFirebaseConfigured && db) {
+    try {
+      await ensureStudentAuth();
+      const remoteSnap = await getDoc(doc(db, 'participants', participantId));
+      if (remoteSnap.exists()) {
+        const remoteData = { id: remoteSnap.id, ...remoteSnap.data() };
+        const localParts = readLocalCollection(STORAGE_KEYS.PARTICIPANTS, []);
+        const lIdx = localParts.findIndex((p) => p.id === participantId);
+        if (lIdx >= 0) localParts[lIdx] = remoteData;
+        else localParts.push(remoteData);
+        writeLocalCollection(STORAGE_KEYS.PARTICIPANTS, localParts);
+
+        for (const subj of ['fisica', 'quimica']) {
+          const actId = remoteData.activeAttemptId?.[subj];
+          if (actId) {
+            const actSnap = await getDoc(doc(db, 'active_attempts', actId));
+            if (actSnap.exists()) {
+              const localActs = readLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, {});
+              localActs[actId] = { attemptId: actSnap.id, ...actSnap.data() };
+              writeLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, localActs);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Dashboard remote sync notice:', e.message);
+    }
+  }
+
   const participants = readLocalCollection(STORAGE_KEYS.PARTICIPANTS, []);
   const pIdx = participants.findIndex((p) => p.id === participantId);
 
@@ -380,7 +441,6 @@ export async function getStudentDashboardStatus(participantId) {
   const participant = participants.find((p) => p.id === participantId);
   const activeAttempts = readLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, {});
 
-  // Check if any in_progress attempt has expired on the clock; if so, auto-finalize it
   for (const subj of ['fisica', 'quimica']) {
     const activeId = participant.activeAttemptId?.[subj];
     if (activeId && activeAttempts[activeId]) {
@@ -395,7 +455,6 @@ export async function getStudentDashboardStatus(participantId) {
     }
   }
 
-  // Re-read updated state
   const updatedParticipants = readLocalCollection(STORAGE_KEYS.PARTICIPANTS, []);
   const freshParticipant = updatedParticipants.find((p) => p.id === participantId) || participant;
   const freshAttempts = readLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, {});
@@ -417,7 +476,6 @@ export async function getStudentDashboardStatus(participantId) {
         }
       : null;
 
-    // Collect history of completed attempts FOR THIS STUDENT WITHOUT SCORES
     const completedHistory = Object.values(freshAttempts)
       .filter((a) => a.participantId === participantId && a.subject === subject && a.status === 'completed')
       .sort((a, b) => a.attemptNumber - b.attemptNumber)
@@ -458,35 +516,14 @@ export async function getStudentDashboardStatus(participantId) {
 
 /**
  * Start a new evaluation or resume an interrupted evaluation for a subject ('fisica' or 'quimica')
- * Guarantees:
- * - Max 3 attempts per subject
- * - No simultaneous evaluations for the same subject
- * - Interrupted attempt recovery with exact remaining timer
- * - Random selection of questions & random order of options
- * - Correct answers are stripped and stored exclusively in backend/secret storage
  */
 export async function startOrResumeEvaluation({ participantId, subject }) {
   if (!participantId || !['fisica', 'quimica'].includes(subject)) {
     throw new Error('Asignatura o participante inválido.');
   }
 
-  if (isFirebaseConfigured && functions) {
-    try {
-      await ensureStudentAuth();
-      const callStart = httpsCallable(functions, 'startOrResumeEvaluation');
-      const res = await callStart({ participantId, subject });
-      if (res?.data?.attempt) {
-        return res.data;
-      }
-    } catch (err) {
-      if (err.code === 'functions/resource-exhausted' || err.code === 'functions/permission-denied') {
-        throw new Error(err.message);
-      }
-      console.warn('Cloud Function startOrResumeEvaluation fallback:', err.message);
-    }
-  }
-
   await ensureInitialized();
+  const uid = await ensureStudentAuth();
   const settings = await getExamSettings();
   const maxAttempts = Number(settings.maxAttemptsPerSubject) || 3;
   const questionsPerAttempt = Number(settings.questionsPerAttempt) || 10;
@@ -504,7 +541,6 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
   const activeAttempts = readLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, {});
   const attemptSecrets = readLocalCollection(STORAGE_KEYS.ATTEMPT_SECRETS, {});
 
-  // Check if there is an active interrupted attempt for this subject
   const existingActiveId = participant.activeAttemptId?.[subject];
   if (existingActiveId && activeAttempts[existingActiveId]) {
     const existingAttempt = activeAttempts[existingActiveId];
@@ -518,7 +554,6 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
         }
       };
     } else if (existingAttempt.status === 'in_progress' && now >= existingAttempt.expiresAt) {
-      // Auto-finalize expired attempt before checking remaining attempts
       await submitEvaluationAttempt({
         attemptId: existingActiveId,
         selectedAnswers: existingAttempt.selectedAnswers || {},
@@ -527,7 +562,6 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
     }
   }
 
-  // Reload participant after potential auto-close
   const refreshedParticipants = readLocalCollection(STORAGE_KEYS.PARTICIPANTS, []);
   const refreshedIdx = refreshedParticipants.findIndex((p) => p.id === participantId);
   const currentParticipant = refreshedParticipants[refreshedIdx];
@@ -539,31 +573,46 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
     );
   }
 
-  // Filter active questions for this subject
+  // Load questions from remote questions_public (without correctOptionId) if connected, or local cache
+  let subjectQuestions = [];
+  if (isFirebaseConfigured && db) {
+    try {
+      const pubSnap = await getDocs(collection(db, 'questions_public'));
+      if (!pubSnap.empty) {
+        const pubList = [];
+        pubSnap.forEach((d) => pubList.push({ id: d.id, ...d.data() }));
+        subjectQuestions = pubList.filter((q) => q.subject === subject && q.active !== false);
+      }
+    } catch (e) {
+      console.warn('questions_public fetch notice:', e.message);
+    }
+  }
+
   const allQuestions = readLocalCollection(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS);
-  const subjectQuestions = allQuestions.filter((q) => q.subject === subject && q.active !== false);
+  if (subjectQuestions.length === 0) {
+    subjectQuestions = allQuestions.filter((q) => q.subject === subject && q.active !== false);
+  }
 
   if (subjectQuestions.length === 0) {
     throw new Error(`No hay preguntas disponibles en el banco activo de ${subject === 'fisica' ? 'Física' : 'Química'}.`);
   }
 
-  // Randomize questions and randomize options for each question
   const selectedPool = shuffleArray(subjectQuestions).slice(0, Math.min(questionsPerAttempt, subjectQuestions.length));
   const answerKey = {};
 
   const sanitizedQuestions = selectedPool.map((q, index) => {
+    const fullQuestion = allQuestions.find((fq) => fq.id === q.id) || q;
     const shuffledOptions = shuffleArray(q.options || []).map((opt) => ({
       id: opt.id,
       text: opt.text
     }));
 
     answerKey[q.id] = {
-      correctOptionId: q.correctOptionId,
+      correctOptionId: fullQuestion.correctOptionId,
       points: Number(q.points) || 10,
-      explanation: q.explanation || ''
+      explanation: fullQuestion.explanation || ''
     };
 
-    // Strip correctOptionId and explanation so student client object never contains them
     return {
       id: q.id,
       order: index + 1,
@@ -585,7 +634,7 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
   const activeAttemptDoc = {
     attemptId,
     participantId,
-    uid: currentParticipant.uid,
+    uid: currentParticipant.uid || uid,
     subject,
     attemptNumber: nextAttemptNumber,
     status: 'in_progress',
@@ -621,6 +670,18 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
   writeLocalCollection(STORAGE_KEYS.PARTICIPANTS, refreshedParticipants);
   saveStudentSession(currentParticipant);
 
+  if (isFirebaseConfigured && db) {
+    try {
+      await setDoc(doc(db, 'active_attempts', attemptId), activeAttemptDoc);
+      await updateDoc(doc(db, 'participants', participantId), {
+        [`activeAttemptId.${subject}`]: attemptId,
+        updatedAt: now
+      });
+    } catch (e) {
+      console.warn('Firestore startOrResumeEvaluation sync notice:', e.message);
+    }
+  }
+
   return {
     resumed: false,
     attempt: {
@@ -636,19 +697,6 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
 export async function saveAttemptProgress({ attemptId, selectedAnswers }) {
   if (!attemptId || typeof selectedAnswers !== 'object') {
     throw new Error('Datos de progreso inválidos.');
-  }
-
-  if (isFirebaseConfigured && functions) {
-    try {
-      const callSave = httpsCallable(functions, 'saveAttemptProgress');
-      const res = await callSave({ attemptId, selectedAnswers });
-      if (res?.data?.saved) return res.data;
-    } catch (err) {
-      if (err.code === 'functions/failed-precondition' || err.code === 'functions/deadline-exceeded') {
-        throw new Error(err.message);
-      }
-      console.warn('Cloud Function saveAttemptProgress fallback:', err.message);
-    }
   }
 
   const activeAttempts = readLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, {});
@@ -669,31 +717,23 @@ export async function saveAttemptProgress({ attemptId, selectedAnswers }) {
   activeAttempts[attemptId] = attempt;
   writeLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, activeAttempts);
 
+  if (isFirebaseConfigured && db) {
+    updateDoc(doc(db, 'active_attempts', attemptId), {
+      selectedAnswers: attempt.selectedAnswers,
+      updatedAt: now
+    }).catch(() => {});
+  }
+
   return { saved: true, updatedAt: now };
 }
 
 /**
- * Submit and automatically grade evaluation on the backend, storing results ONLY in admin storage
+ * Submit and automatically grade evaluation, storing results in admin-only evaluation_results
  * and hiding scores/correct answers from the student return payload.
  */
 export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {}, reason = 'student_submit' }) {
   if (!attemptId) {
     throw new Error('ID de evaluación requerido.');
-  }
-
-  if (isFirebaseConfigured && functions) {
-    try {
-      const callSubmit = httpsCallable(functions, 'submitEvaluation');
-      const res = await callSubmit({ attemptId, selectedAnswers, reason });
-      if (res?.data?.success) {
-        return res.data;
-      }
-    } catch (err) {
-      if (err.code === 'functions/already-exists') {
-        throw new Error('Esta evaluación ya fue finalizada anteriormente y no puede modificarse.');
-      }
-      console.warn('Cloud Function submitEvaluation fallback:', err.message);
-    }
   }
 
   const activeAttempts = readLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, {});
@@ -774,7 +814,7 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
   const resultRecord = {
     attemptId: attempt.attemptId,
     participantId: participant.id,
-    uid: participant.uid,
+    uid: attempt.uid || participant.uid,
     documento: participant.documento,
     fullName: participant.fullName,
     sectionId: participant.sectionId,
@@ -796,7 +836,6 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
     completedAt: now
   };
 
-  // Save to admin-only evaluation_results
   const existingResIdx = results.findIndex((r) => r.attemptId === attempt.attemptId);
   if (existingResIdx >= 0) {
     results[existingResIdx] = resultRecord;
@@ -804,14 +843,12 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
     results.push(resultRecord);
   }
 
-  // Mark attempt completed without exposing score
   attempt.status = 'completed';
   attempt.completedAt = now;
   attempt.updatedAt = now;
   attempt.completionReason = reason;
   activeAttempts[attemptId] = attempt;
 
-  // Increment student's attempt counter for this subject and clear activeAttemptId
   const prevCount = Number(participant.attemptsCount?.[attempt.subject] || 0);
   const newCount = Math.max(prevCount, attempt.attemptNumber);
   participant.attemptsCount = {
@@ -829,6 +866,27 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
   writeLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, activeAttempts);
   writeLocalCollection(STORAGE_KEYS.PARTICIPANTS, participants);
   saveStudentSession(participant);
+
+  if (isFirebaseConfigured && db) {
+    try {
+      await ensureStudentAuth();
+      await setDoc(doc(db, 'evaluation_results', attempt.attemptId), resultRecord);
+      await updateDoc(doc(db, 'active_attempts', attempt.attemptId), {
+        selectedAnswers: finalSelected,
+        status: 'completed',
+        completedAt: now,
+        updatedAt: now,
+        completionReason: reason
+      });
+      await updateDoc(doc(db, 'participants', participant.id), {
+        attemptsCount: participant.attemptsCount,
+        activeAttemptId: participant.activeAttemptId,
+        updatedAt: now
+      });
+    } catch (e) {
+      console.warn('Firestore submitEvaluationAttempt sync notice:', e.message);
+    }
+  }
 
   const maxAttempts = Number((await getExamSettings()).maxAttemptsPerSubject) || 3;
 
@@ -875,7 +933,6 @@ export async function loginAdmin({ email, password }) {
     throw new Error('Debe ingresar el correo institucional y la contraseña administrativa.');
   }
 
-  // If Firebase is configured, attempt Firebase Auth sign-in and verify /admins/{uid} role
   if (isFirebaseConfigured && auth && db) {
     try {
       const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
@@ -892,7 +949,6 @@ export async function loginAdmin({ email, password }) {
         return session;
       }
     } catch (err) {
-      // Allow fallback to configured institutional admin credentials if Firebase user isn't provisioned yet
       console.warn('Firebase Auth admin check notice:', err.message);
     }
   }
@@ -905,8 +961,16 @@ export async function loginAdmin({ email, password }) {
     (cleanEmail === DEFAULT_ADMIN_CREDENTIALS.email || allowedEmails.includes(cleanEmail)) &&
     password === DEFAULT_ADMIN_CREDENTIALS.passwordHash
   ) {
+    // Also sign in to Firebase Auth in the background if configured so Firestore rules recognize isAdmin()
+    if (isFirebaseConfigured && auth) {
+      try {
+        await signInWithEmailAndPassword(auth, DEFAULT_ADMIN_CREDENTIALS.email, DEFAULT_ADMIN_CREDENTIALS.passwordHash);
+      } catch {
+        // ignore
+      }
+    }
     const session = {
-      uid: 'admin_master_10mo',
+      uid: auth?.currentUser?.uid || 'admin_master_10mo',
       email: cleanEmail,
       name: DEFAULT_ADMIN_CREDENTIALS.name,
       role: 'admin',
@@ -946,6 +1010,52 @@ export async function adminGetOverviewData() {
   assertAdminSession();
   await ensureInitialized();
 
+  if (isFirebaseConfigured && db && auth) {
+    try {
+      if (!auth.currentUser || auth.currentUser.isAnonymous) {
+        await signInWithEmailAndPassword(auth, DEFAULT_ADMIN_CREDENTIALS.email, DEFAULT_ADMIN_CREDENTIALS.passwordHash);
+      }
+      const [partSnap, resSnap, qSnap, secSnap, setSnap, actSnap] = await Promise.all([
+        getDocs(collection(db, 'participants')),
+        getDocs(collection(db, 'evaluation_results')),
+        getDocs(collection(db, 'questions')),
+        getDocs(collection(db, 'sections')),
+        getDoc(doc(db, 'settings', 'exam_config')),
+        getDocs(collection(db, 'active_attempts'))
+      ]);
+
+      const remoteParticipants = [];
+      partSnap.forEach((d) => remoteParticipants.push({ id: d.id, ...d.data() }));
+      if (remoteParticipants.length > 0) writeLocalCollection(STORAGE_KEYS.PARTICIPANTS, remoteParticipants);
+
+      const remoteResults = [];
+      resSnap.forEach((d) => remoteResults.push({ attemptId: d.id, ...d.data() }));
+      if (remoteResults.length > 0) writeLocalCollection(STORAGE_KEYS.RESULTS, remoteResults);
+
+      const remoteQuestions = [];
+      qSnap.forEach((d) => remoteQuestions.push({ id: d.id, ...d.data() }));
+      if (remoteQuestions.length > 0) writeLocalCollection(STORAGE_KEYS.QUESTIONS, remoteQuestions);
+
+      const remoteSections = [];
+      secSnap.forEach((d) => remoteSections.push({ id: d.id, ...d.data() }));
+      if (remoteSections.length > 0) writeLocalCollection(STORAGE_KEYS.SECTIONS, remoteSections);
+
+      if (setSnap.exists()) {
+        writeLocalCollection(STORAGE_KEYS.SETTINGS, { id: setSnap.id, ...setSnap.data() });
+      }
+
+      const remoteActiveMap = {};
+      actSnap.forEach((d) => {
+        remoteActiveMap[d.id] = { attemptId: d.id, ...d.data() };
+      });
+      if (Object.keys(remoteActiveMap).length > 0) {
+        writeLocalCollection(STORAGE_KEYS.ACTIVE_ATTEMPTS, remoteActiveMap);
+      }
+    } catch (e) {
+      console.warn('Firestore adminGetOverviewData sync notice:', e.message);
+    }
+  }
+
   const participants = readLocalCollection(STORAGE_KEYS.PARTICIPANTS, []);
   const results = readLocalCollection(STORAGE_KEYS.RESULTS, []);
   const questions = readLocalCollection(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS);
@@ -966,7 +1076,7 @@ export async function adminGetOverviewData() {
 }
 
 /**
- * Admin CRUD: Questions
+ * Admin CRUD: Questions (Writes full question to /questions and sanitized question to /questions_public)
  */
 export async function adminSaveQuestion(questionData) {
   assertAdminSession();
@@ -1005,6 +1115,19 @@ export async function adminSaveQuestion(questionData) {
     updatedAt: now
   };
 
+  const publicRecord = {
+    id: record.id,
+    subject: record.subject,
+    grade: record.grade,
+    topic: record.topic,
+    difficulty: record.difficulty,
+    prompt: record.prompt,
+    options: record.options,
+    points: record.points,
+    active: record.active,
+    updatedAt: now
+  };
+
   const existingIdx = questions.findIndex((q) => q.id === id);
   if (existingIdx >= 0) {
     questions[existingIdx] = { ...questions[existingIdx], ...record };
@@ -1017,6 +1140,7 @@ export async function adminSaveQuestion(questionData) {
   if (isFirebaseConfigured && db) {
     try {
       await setDoc(doc(db, 'questions', id), record, { merge: true });
+      await setDoc(doc(db, 'questions_public', id), publicRecord, { merge: true });
     } catch (e) {
       console.warn('Firestore question sync notice:', e.message);
     }
@@ -1034,6 +1158,7 @@ export async function adminDeleteQuestion(questionId) {
   if (isFirebaseConfigured && db) {
     try {
       await deleteDoc(doc(db, 'questions', questionId));
+      await deleteDoc(doc(db, 'questions_public', questionId));
     } catch (e) {
       console.warn('Firestore deleteQuestion notice:', e.message);
     }
@@ -1084,6 +1209,9 @@ export async function adminSaveSection(sectionData) {
   }
 
   writeLocalCollection(STORAGE_KEYS.SECTIONS, sections);
+  if (isFirebaseConfigured && db) {
+    setDoc(doc(db, 'sections', id), record, { merge: true }).catch(() => {});
+  }
   return record;
 }
 
@@ -1092,6 +1220,9 @@ export async function adminDeleteSection(sectionId) {
   const sections = readLocalCollection(STORAGE_KEYS.SECTIONS, INITIAL_SECTIONS);
   const filtered = sections.filter((s) => s.id !== sectionId);
   writeLocalCollection(STORAGE_KEYS.SECTIONS, filtered);
+  if (isFirebaseConfigured && db) {
+    deleteDoc(doc(db, 'sections', sectionId)).catch(() => {});
+  }
   return true;
 }
 
@@ -1111,6 +1242,9 @@ export async function adminSaveSettings(newSettings) {
     updatedAt: Date.now()
   };
   writeLocalCollection(STORAGE_KEYS.SETTINGS, updated);
+  if (isFirebaseConfigured && db) {
+    setDoc(doc(db, 'settings', 'exam_config'), updated, { merge: true }).catch(() => {});
+  }
   return updated;
 }
 
@@ -1133,6 +1267,13 @@ export async function adminResetParticipantAttempts(participantId, subject) {
   }
   participants[idx].updatedAt = Date.now();
   writeLocalCollection(STORAGE_KEYS.PARTICIPANTS, participants);
+  if (isFirebaseConfigured && db) {
+    updateDoc(doc(db, 'participants', participantId), {
+      attemptsCount: participants[idx].attemptsCount,
+      activeAttemptId: participants[idx].activeAttemptId,
+      updatedAt: participants[idx].updatedAt
+    }).catch(() => {});
+  }
   return participants[idx];
 }
 
@@ -1145,9 +1286,15 @@ export async function adminDeleteParticipant(participantId) {
 
   if (target) {
     const docIndex = readLocalCollection(STORAGE_KEYS.PARTICIPANTS_BY_DOC, {});
-    delete docIndex[normalizeDocumento(target.documento)];
+    const cleanDoc = normalizeDocumento(target.documento);
+    delete docIndex[cleanDoc];
     writeLocalCollection(STORAGE_KEYS.PARTICIPANTS_BY_DOC, docIndex);
+    if (isFirebaseConfigured && db) {
+      deleteDoc(doc(db, 'participants_by_doc', cleanDoc)).catch(() => {});
+    }
+  }
+  if (isFirebaseConfigured && db) {
+    deleteDoc(doc(db, 'participants', participantId)).catch(() => {});
   }
   return true;
 }
-

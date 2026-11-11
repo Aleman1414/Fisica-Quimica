@@ -12,83 +12,105 @@ rules_version = '2';
 //   - role: string (required, == 'admin') - Administrator role identifier
 //   - email: string (optional, <= 254 chars) - Admin email
 //   - name: string (optional, <= 120 chars) - Admin display name
-//   - createdAt: timestamp (optional, immutable) - Creation timestamp
+//   - createdAt: timestamp | int (optional, immutable) - Creation timestamp
 //
 // Collection: sections
 // Document ID: {sectionId}
 // Fields:
-//   - name: string (required, 1..100 chars) - Section display name (e.g., "10-A")
-//   - code: string (required, 1..50 chars) - Section unique code
+//   - name: string (required, 1..100 chars) - Section display name (e.g., "Décimo Grado - Sección A")
+//   - code: string (required, 1..50 chars) - Section unique code (e.g., "10-A")
 //   - active: bool (required) - Whether students can register in this section
-//   - grade: string (optional, <= 20 chars) - Grade level (e.g., "10")
-//   - createdAt: timestamp (optional, immutable) - Creation timestamp
-//   - updatedAt: timestamp (optional) - Last update timestamp
+//   - grade: string (optional, <= 50 chars) - Grade level ("Décimo Grado")
+//   - updatedAt: timestamp | int (optional) - Last update timestamp
 //
 // Collection: settings
 // Document ID: {settingId}
 // Fields:
 //   - Evaluation configuration parameters (managed exclusively by admins)
 //
-// Collection: participants
-// Document ID: {participantId}
-// Fields:
-//   - uid: string (required, immutable) - Firebase Auth UID of the student
-//   - documento: string (required, immutable, 1..50 chars) - Student identification document
-//   - fullName: string (required, 1..150 chars) - Student full name
-//   - sectionId: string (required, 1..100 chars) - Section reference ID
-//   - sectionName: string (required, 1..100 chars) - Denormalized section name
-//   - grade: string (required, 1..20 chars) - Student grade ("10")
-//   - attemptsCount: int (required, >= 0) - Total attempts consumed (or map per subject)
-//   - activeAttemptId: string (optional, nullable) - Currently active attempt ID
-//   - createdAt: timestamp (required, immutable) - Registration timestamp
-//   - updatedAt: timestamp (required) - Last update timestamp
-//   NOTE: Contains NO evaluation scores. Created/updated via Cloud Functions Admin SDK.
-//
-// Collection: participants_by_doc
-// Document ID: {documento}
-// Fields:
-//   - uid: string (required) - Firebase Auth UID owning this documento
-//   - participantId: string (required) - Reference to /participants/{participantId}
-//   - createdAt: timestamp (required) - Creation timestamp
-//   NOTE: Used by backend transactions to guarantee uniqueness of `documento`.
-//
 // Collection: questions
 // Document ID: {questionId}
 // Fields:
-//   - subject: string (required) - Subject ('physics' | 'chemistry' | etc.)
-//   - competency: string (required) - Evaluated competency
-//   - prompt: string (required) - Question stem / statement
-//   - options: list (required) - Answer choices
+//   - subject: string (required, 'fisica' | 'quimica') - Subject identifier
+//   - prompt: string (required, 1..2000 chars) - Question statement
+//   - options: list (required, 2..10 items) - Answer choices
 //   - correctOptionId: string (required) - CONFIDENTIAL correct option ID
 //   - explanation: string (optional) - Pedagogical explanation
 //   - active: bool (required) - Whether question is eligible for random selection
 //   CRITICAL: Students must NEVER read /questions/{questionId}.
 //
+// Collection: questions_public
+// Document ID: {questionId}
+// Fields:
+//   - subject: string (required, 'fisica' | 'quimica') - Subject identifier
+//   - prompt: string (required, 1..2000 chars) - Question statement
+//   - options: list (required, 2..10 items) - Answer choices without answer key
+//   - active: bool (required) - Whether question is active
+//   CRITICAL: Never contains `correctOptionId` or `explanation`.
+//
 // Collection: attempt_secrets
 // Document ID: {attemptId}
 // Fields:
 //   - answerKey: map (required) - Server-only answer key mapping questionId -> correctOptionId
-//   CRITICAL: Server-only (Admin SDK in Cloud Functions). Never readable or writable by clients.
+//   CRITICAL: Server-only (Admin SDK). Never readable or writable by clients.
+//
+// Collection: participants_by_doc
+// Document ID: {documento}
+// Fields:
+//   - documento: string (required, 1..50 chars, immutable) - Normalized student ID
+//   - participantId: string (required, 1..120 chars, immutable) - Reference to /participants/{participantId}
+//   - uid: string (required, 1..128 chars) - Current Firebase Auth UID
+//   - fullName: string (optional, <= 150 chars) - Student full name
+//   - createdAt: timestamp | int (optional) - Creation timestamp
+//
+// Collection: participants
+// Document ID: {participantId}
+// Fields:
+//   - uid: string (required, 1..128 chars) - Firebase Auth UID of the student
+//   - documento: string (required, immutable, 1..50 chars) - Normalized student document ID
+//   - documentoDisplay: string (optional, <= 60 chars) - Formatted document ID
+//   - fullName: string (required, 1..150 chars) - Student full name
+//   - grade: string (required, 1..50 chars) - Student grade ("Décimo Grado")
+//   - sectionId: string (required, 1..100 chars) - Section reference ID
+//   - sectionName: string (required, 1..100 chars) - Denormalized section name
+//   - sectionCode: string (optional, <= 50 chars) - Denormalized section code
+//   - email: string (optional, <= 254 chars) - Student email
+//   - phone: string (optional, <= 40 chars) - Student phone
+//   - attemptsCount: map (required, { fisica: 0..3, quimica: 0..3 }) - Completed attempts per subject
+//   - activeAttemptId: map (optional, { fisica: string|null, quimica: string|null }) - Active attempt IDs
+//   - createdAt: timestamp | int (optional, immutable) - Registration timestamp
+//   - updatedAt: timestamp | int (optional) - Last update timestamp
+//   NOTE: Contains NO evaluation scores (`score` is strictly forbidden).
 //
 // Collection: active_attempts
 // Document ID: {attemptId}
 // Fields:
-//   - uid: string (required, immutable) - Student Firebase Auth UID
-//   - participantId: string (required, immutable) - Reference to participant doc
-//   - subject: string (required, immutable) - Subject identifier
-//   - attemptNumber: int (required, immutable) - 1-based attempt number
-//   - status: string (required, 'in_progress' | 'submitted' | 'expired') - Attempt lifecycle state
-//   - questions: list (required, immutable) - Sanitized questions & shuffled options (NO correctOptionId)
+//   - attemptId: string (optional, <= 150 chars) - Attempt identifier
+//   - uid: string (required, 1..128 chars, immutable) - Student Firebase Auth UID
+//   - participantId: string (required, 1..120 chars, immutable) - Reference to participant doc
+//   - subject: string (required, 'fisica' | 'quimica', immutable) - Subject identifier
+//   - attemptNumber: int (required, 1..3, immutable) - 1-based attempt number
+//   - status: string (required, 'in_progress' | 'completed') - Attempt lifecycle state
+//   - questions: list (required, <= 40 items) - Sanitized questions & shuffled options (NO correctOptionId)
 //   - selectedAnswers: map (required, <= 50 keys) - Student answers map (questionId -> optionId)
-//   - startedAt: timestamp (required, immutable) - Server start timestamp
-//   - expiresAt: timestamp (required, immutable) - Server expiration deadline
-//   - updatedAt: timestamp (required) - Last progress save timestamp
+//   - startedAt: timestamp | int (required, immutable) - Start timestamp
+//   - expiresAt: timestamp | int (required, immutable) - Expiration deadline
+//   - updatedAt: timestamp | int (optional) - Last progress save timestamp
 //
 // Collection: evaluation_results
 // Document ID: {attemptId}
 // Fields:
-//   - Graded evaluation results, scores, and breakdown.
-//   CRITICAL: Students must NEVER read or write /evaluation_results/{attemptId}.
+//   - attemptId: string (required, 1..150 chars)
+//   - participantId: string (required, 1..120 chars)
+//   - uid: string (required, 1..128 chars)
+//   - documento: string (required, 1..50 chars)
+//   - fullName: string (required, 1..150 chars)
+//   - subject: string (required, 'fisica' | 'quimica')
+//   - attemptNumber: int (required, 1..3)
+//   - score: number (required, >= 0)
+//   - maxScore: number (required, > 0)
+//   - percentage: number (required, 0..100)
+//   CRITICAL: Students must NEVER read /evaluation_results/{attemptId}.
 //
 // ===============================================================
 
@@ -115,66 +137,126 @@ service cloud.firestore {
       );
     }
 
-    // Check if user is owner based on document's uid field
-    function isDocOwner() {
-      return isAuthenticated() && resource.data.uid == request.auth.uid;
-    }
-
-    // Verify UID hasn't been tampered with on create
-    function uidUnchanged() {
-      return !('uid' in request.resource.data) ||
-        request.resource.data.uid == request.auth.uid;
-    }
-
-    // Ensure uid field is not modified on update
-    function uidNotModified() {
-      return !('uid' in request.resource.data) ||
-        request.resource.data.uid == resource.data.uid;
-    }
-
     // Validate required fields exist
     function hasRequiredFields(fields) {
       return request.resource.data.keys().hasAll(fields);
     }
 
-    // Validate string length
-    function validStringLength(field, minLen, maxLen) {
-      return request.resource.data[field] is string &&
-        request.resource.data[field].size() >= minLen &&
-        request.resource.data[field].size() <= maxLen;
+    // Validate string length on a map
+    function validString(data, field, minLen, maxLen) {
+      return data[field] is string &&
+        data[field].size() >= minLen &&
+        data[field].size() <= maxLen;
     }
 
-    // Validate that the document hasn't changed in immutable fields
-    function areImmutableFieldsUnchanged(fields) {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    // Validate optional string length on a map
+    function validOptionalString(data, field, maxLen) {
+      return !(field in data) ||
+        data[field] == null ||
+        (data[field] is string && data[field].size() <= maxLen);
     }
 
     // ===============================================================
-    // Domain Validators (Used in both create and update)
+    // Domain Validators (Called in both create and update)
     // ===============================================================
+
+    // Validate admin document
+    function isValidAdmin(data) {
+      return hasRequiredFields(['role']) &&
+        data.role is string &&
+        data.role == 'admin' &&
+        validOptionalString(data, 'email', 254) &&
+        validOptionalString(data, 'name', 120);
+    }
 
     // Validate section schema for /sections/{sectionId}
     function isValidSection(data) {
       return hasRequiredFields(['name', 'code', 'active']) &&
-        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
-        data.code is string && data.code.size() >= 1 && data.code.size() <= 50 &&
+        validString(data, 'name', 1, 100) &&
+        validString(data, 'code', 1, 50) &&
         data.active is bool &&
-        (!('grade' in data) || (data.grade is string && data.grade.size() <= 20)) &&
-        (!('description' in data) || (data.description is string && data.description.size() <= 500));
+        validOptionalString(data, 'grade', 50) &&
+        validOptionalString(data, 'description', 500);
     }
 
-    // Validate student progress update on /active_attempts/{attemptId}
-    function isValidStudentAttemptProgressUpdate() {
-      return isDocOwner() &&
-        uidNotModified() &&
-        resource.data.status == 'in_progress' &&
-        request.resource.data.status == 'in_progress' &&
-        request.time < resource.data.expiresAt &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['selectedAnswers', 'updatedAt']) &&
-        areImmutableFieldsUnchanged(['uid', 'participantId', 'subject', 'attemptNumber', 'questions', 'startedAt', 'expiresAt', 'status']) &&
-        request.resource.data.selectedAnswers is map &&
-        request.resource.data.selectedAnswers.size() <= 50 &&
-        request.resource.data.updatedAt == request.time;
+    // Validate sanitized public question for /questions_public/{questionId}
+    function isValidPublicQuestion(data) {
+      return !('correctOptionId' in data) &&
+        !('explanation' in data) &&
+        validString(data, 'subject', 1, 30) &&
+        validString(data, 'prompt', 1, 2000) &&
+        data.options is list &&
+        data.options.size() >= 2 &&
+        data.options.size() <= 10;
+    }
+
+    // Validate document uniqueness index entry for /participants_by_doc/{documento}
+    function isValidParticipantByDoc(data) {
+      return hasRequiredFields(['documento', 'participantId', 'uid']) &&
+        validString(data, 'documento', 1, 50) &&
+        validString(data, 'participantId', 1, 120) &&
+        validString(data, 'uid', 1, 128) &&
+        validOptionalString(data, 'fullName', 150);
+    }
+
+    // Validate participant profile for /participants/{participantId}
+    function isValidParticipant(data) {
+      return hasRequiredFields(['uid', 'documento', 'fullName', 'sectionId', 'attemptsCount']) &&
+        !('score' in data) &&
+        validString(data, 'uid', 1, 128) &&
+        validString(data, 'documento', 1, 50) &&
+        validString(data, 'fullName', 1, 150) &&
+        validString(data, 'sectionId', 1, 100) &&
+        validOptionalString(data, 'documentoDisplay', 60) &&
+        validOptionalString(data, 'sectionName', 100) &&
+        validOptionalString(data, 'sectionCode', 50) &&
+        validOptionalString(data, 'grade', 50) &&
+        validOptionalString(data, 'email', 254) &&
+        validOptionalString(data, 'phone', 40) &&
+        data.attemptsCount is map &&
+        data.attemptsCount.fisica is number &&
+        data.attemptsCount.fisica >= 0 &&
+        data.attemptsCount.fisica <= 3 &&
+        data.attemptsCount.quimica is number &&
+        data.attemptsCount.quimica >= 0 &&
+        data.attemptsCount.quimica <= 3;
+    }
+
+    // Validate active evaluation attempt for /active_attempts/{attemptId}
+    function isValidActiveAttempt(data) {
+      return hasRequiredFields(['uid', 'participantId', 'subject', 'attemptNumber', 'status', 'questions', 'selectedAnswers']) &&
+        validString(data, 'uid', 1, 128) &&
+        validString(data, 'participantId', 1, 120) &&
+        (data.subject == 'fisica' || data.subject == 'quimica') &&
+        data.attemptNumber is number &&
+        data.attemptNumber >= 1 &&
+        data.attemptNumber <= 3 &&
+        (data.status == 'in_progress' || data.status == 'completed') &&
+        data.questions is list &&
+        data.questions.size() <= 40 &&
+        data.selectedAnswers is map &&
+        data.selectedAnswers.size() <= 50;
+    }
+
+    // Validate evaluation result for /evaluation_results/{attemptId}
+    function isValidEvaluationResult(data) {
+      return hasRequiredFields(['attemptId', 'participantId', 'uid', 'documento', 'fullName', 'subject', 'attemptNumber', 'score', 'maxScore', 'percentage']) &&
+        validString(data, 'attemptId', 1, 150) &&
+        validString(data, 'participantId', 1, 120) &&
+        validString(data, 'uid', 1, 128) &&
+        validString(data, 'documento', 1, 50) &&
+        validString(data, 'fullName', 1, 150) &&
+        (data.subject == 'fisica' || data.subject == 'quimica') &&
+        data.attemptNumber is number &&
+        data.attemptNumber >= 1 &&
+        data.attemptNumber <= 3 &&
+        data.score is number &&
+        data.score >= 0 &&
+        data.maxScore is number &&
+        data.maxScore > 0 &&
+        data.percentage is number &&
+        data.percentage >= 0 &&
+        data.percentage <= 100;
     }
 
     // ===============================================================
@@ -185,70 +267,129 @@ service cloud.firestore {
     match /admins/{adminUid} {
       allow get: if isAuthenticated() && (request.auth.uid == adminUid || isAdmin());
       allow list: if isAdmin();
-      allow create, update: if isAdmin() &&
-        request.resource.data.role is string &&
-        request.resource.data.role == 'admin';
+      allow create, update: if isAdmin() && isValidAdmin(request.resource.data);
       allow delete: if isAdmin();
     }
 
     // 2. Course Sections (/sections/{sectionId})
     match /sections/{sectionId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin() && isValidSection(request.resource.data);
-      allow update: if isAdmin() && isValidSection(request.resource.data);
+      allow create, update: if isAdmin() && isValidSection(request.resource.data);
       allow delete: if isAdmin();
     }
 
     // 3. System Settings (/settings/{settingId})
     match /settings/{settingId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+      allow write: if isAdmin();
     }
 
-    // 4. Student Participants (/participants/{participantId})
-    // Contains registration profile and attempt counters (NO scores).
-    // Mutations occur exclusively via Cloud Functions (Admin SDK) or Admin UI.
-    match /participants/{participantId} {
-      allow get: if isAdmin() || isDocOwner();
-      allow list: if isAdmin();
-      allow create, update, delete: if isAdmin();
-    }
-
-    // 5. Document Uniqueness Index (/participants_by_doc/{documento})
-    // Used by backend transactions to prevent duplicate identity documents.
-    match /participants_by_doc/{documento} {
-      allow read, write: if isAdmin();
-    }
-
-    // 6. Master Question Bank (/questions/{questionId})
-    // CRITICAL: Contains correctOptionId and explanation. Students must NEVER read.
+    // 4. Master Question Bank (/questions/{questionId})
+    // CRITICAL: Contains secret correctOptionId and explanation. Students must NEVER read.
     match /questions/{questionId} {
       allow read, write: if isAdmin();
     }
 
-    // 7. Server-Only Attempt Answer Keys (/attempt_secrets/{attemptId})
+    // 5. Sanitized Public Question Bank (/questions_public/{questionId})
+    // Sanitized question bank WITHOUT correctOptionId or explanation.
+    match /questions_public/{questionId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() &&
+        !('correctOptionId' in request.resource.data) &&
+        isValidPublicQuestion(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // 6. Server-Only Attempt Answer Keys (/attempt_secrets/{attemptId})
     // Accessible ONLY via Firebase Admin SDK in Cloud Functions.
     match /attempt_secrets/{attemptId} {
       allow read, write: if false;
     }
 
-    // 8. Active Evaluation Attempts (/active_attempts/{attemptId})
-    // Sanitized exam payload without answers. Students can read their own attempts
-    // and save selectedAnswers while the attempt is in_progress and before expiresAt.
+    // 7. Document Uniqueness Index (/participants_by_doc/{documento})
+    // Prevents duplicate student registrations by identity document.
+    match /participants_by_doc/{documento} {
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
+      allow create: if isAuthenticated() &&
+        !exists(/databases/$(database)/documents/participants_by_doc/$(documento)) &&
+        isValidParticipantByDoc(request.resource.data);
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        isValidParticipantByDoc(request.resource.data) &&
+        request.resource.data.participantId == resource.data.participantId &&
+        request.resource.data.documento == resource.data.documento
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 8. Student Participants (/participants/{participantId})
+    // Contains registration profile and attempt counters (NO scores).
+    match /participants/{participantId} {
+      allow get: if isAdmin() || isAuthenticated();
+      allow list: if isAdmin();
+      allow create: if isAdmin() || (
+        isAuthenticated() &&
+        isValidParticipant(request.resource.data) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.attemptsCount.fisica == 0 &&
+        request.resource.data.attemptsCount.quimica == 0 &&
+        !('score' in request.resource.data)
+      );
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        isValidParticipant(request.resource.data) &&
+        (resource.data.uid == request.auth.uid || request.resource.data.uid == request.auth.uid) &&
+        request.resource.data.documento == resource.data.documento &&
+        request.resource.data.attemptsCount.fisica >= resource.data.attemptsCount.fisica &&
+        request.resource.data.attemptsCount.fisica <= 3 &&
+        request.resource.data.attemptsCount.quimica >= resource.data.attemptsCount.quimica &&
+        request.resource.data.attemptsCount.quimica <= 3
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 9. Active Evaluation Attempts (/active_attempts/{attemptId})
+    // Sanitized exam payload without answers. Students can manage their own active attempts
+    // up to 3 attempts per subject.
     match /active_attempts/{attemptId} {
-      allow get: if isAdmin() || isDocOwner();
-      allow list: if isAdmin() || isDocOwner();
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin() || isValidStudentAttemptProgressUpdate();
+      allow get, list: if isAdmin() || (isAuthenticated() && resource.data.uid == request.auth.uid);
+      allow create: if isAdmin() || (
+        isAuthenticated() &&
+        isValidActiveAttempt(request.resource.data) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.status == 'in_progress' &&
+        request.resource.data.attemptNumber >= 1 &&
+        request.resource.data.attemptNumber <= 3
+      );
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        isValidActiveAttempt(request.resource.data) &&
+        resource.data.uid == request.auth.uid &&
+        resource.data.status == 'in_progress' &&
+        (request.resource.data.status == 'in_progress' || request.resource.data.status == 'completed') &&
+        request.resource.data.attemptNumber == resource.data.attemptNumber &&
+        request.resource.data.subject == resource.data.subject
+      );
+      allow delete: if isAdmin();
     }
 
-    // 9. Graded Evaluation Results (/evaluation_results/{attemptId})
-    // CRITICAL: Students must NEVER read or write their scores or graded results.
+    // 10. Graded Evaluation Results (/evaluation_results/{attemptId})
+    // CRITICAL: Students must NEVER read /evaluation_results/{attemptId}!
     match /evaluation_results/{attemptId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin() || (
+        isAuthenticated() &&
+        isValidEvaluationResult(request.resource.data) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.attemptNumber >= 1 &&
+        request.resource.data.attemptNumber <= 3 &&
+        !exists(/databases/$(database)/documents/evaluation_results/$(attemptId))
+      );
+      allow update, delete: if isAdmin();
     }
 
-    // 10. Default Deny Catch-All Rule
+    // 11. Default Deny Catch-All Rule
     match /{document=**} {
       allow read, write: if false;
     }
