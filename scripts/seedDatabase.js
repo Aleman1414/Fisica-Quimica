@@ -53,3 +53,4 @@ main().catch((err) => {
   console.error('❌ Error al ejecutar seedDatabase:', err);
   process.exit(1);
 });
+

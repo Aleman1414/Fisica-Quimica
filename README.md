@@ -100,3 +100,4 @@ fisica/
 1. En `/admin/resultados`, filtre por asignatura, sección (`10-A` a `10-D`), número de intento (`1`, `2`, `3`) o estado (`Aprobado`/`Reprobado`).
 2. Haga clic en **Desglose** en cualquier fila para auditar pregunta por pregunta las respuestas del estudiante.
 3. Haga clic en **Exportar Excel (.xlsx)** o **Exportar Acta PDF (.pdf)** para descargar los reportes generados con los datos reales.
+

@@ -743,3 +743,4 @@ export const INITIAL_QUESTIONS = [
     explanation: 'En la escala de pH (0 a 14 a 25 °C), valores menores que 7 corresponden a disoluciones ácidas, 7 es neutro y mayores que 7 son básicas.'
   }
 ];
+

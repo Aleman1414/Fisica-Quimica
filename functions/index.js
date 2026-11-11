@@ -631,3 +631,4 @@ exports.seedInitialDatabase = onCall({ cors: true, enforceAppCheck: false }, asy
     seededQuestions: questions.length
   };
 });
+

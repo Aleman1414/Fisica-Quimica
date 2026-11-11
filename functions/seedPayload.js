@@ -23,3 +23,4 @@ module.exports = {
   INITIAL_SECTIONS,
   INITIAL_SETTINGS
 };
+

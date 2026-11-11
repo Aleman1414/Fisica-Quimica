@@ -209,3 +209,4 @@ export function exportToPDF({ results = [], participants = [], sections = [], fi
   doc.save(fileName);
   return fileName;
 }
+

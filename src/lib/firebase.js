@@ -63,3 +63,4 @@ if (isFirebaseConfigured) {
 }
 
 export { app, auth, db, functions, appCheck, firebaseConfig };
+
