@@ -200,3 +200,4 @@ export default function ExamScheduleBanner({ durationMinutes = 25, compact = fal
     </div>
   );
 }
+
