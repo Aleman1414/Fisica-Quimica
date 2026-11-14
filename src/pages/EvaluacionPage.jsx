@@ -8,10 +8,12 @@ import {
   ChevronRight,
   Send,
   CheckCircle2,
-  AlertTriangle,
   RotateCcw,
   ShieldCheck,
-  Save
+  Save,
+  Trophy,
+  Calendar,
+  Play
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import {
@@ -20,7 +22,7 @@ import {
   saveAttemptProgress,
   submitEvaluationAttempt
 } from '../services/evaluationService';
-import { formatSeconds } from '../utils/reportExporter';
+import { formatSeconds, formatDateTime } from '../utils/reportExporter';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -46,8 +48,7 @@ export default function EvaluacionPage() {
     latestAnswersRef.current = selectedAnswers;
   }, [selectedAnswers]);
 
-  // Initialize or recover evaluation attempt
-  useEffect(() => {
+  const loadEvaluationAttempt = useCallback(async () => {
     if (!['fisica', 'quimica'].includes(subject)) {
       navigate('/estudiante');
       return;
@@ -58,41 +59,40 @@ export default function EvaluacionPage() {
       return;
     }
 
-    let mounted = true;
-    (async () => {
-      try {
-        setLoading(true);
-        const res = await startOrResumeEvaluation({
-          participantId: student.id,
-          subject
-        });
-        if (!mounted) return;
-        setAttempt(res.attempt);
-        setSelectedAnswers(res.attempt.selectedAnswers || {});
-        setResumedBanner(Boolean(res.resumed));
+    try {
+      setLoading(true);
+      setCompletedReceipt(null);
+      autoSubmitTriggered.current = false;
+      const res = await startOrResumeEvaluation({
+        participantId: student.id,
+        subject
+      });
+      setAttempt(res.attempt);
+      setSelectedAnswers(res.attempt.selectedAnswers || {});
+      setCurrentIdx(0);
+      setResumedBanner(Boolean(res.resumed));
 
-        const rem = Math.max(0, Math.floor((res.attempt.expiresAt - Date.now()) / 1000));
-        setRemainingSeconds(rem);
-      } catch (err) {
-        if (!mounted) return;
-        await Swal.fire({
-          title: 'No es posible iniciar la evaluación',
-          text: err.message || 'Ha alcanzado el límite de intentos o no tiene acceso.',
-          icon: 'warning',
-          confirmButtonColor: '#4f46e5',
-          background: '#0f172a',
-          color: '#f8fafc'
-        });
-        navigate('/estudiante');
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
+      const rem = Math.max(0, Math.floor((res.attempt.expiresAt - Date.now()) / 1000));
+      setRemainingSeconds(rem);
+    } catch (err) {
+      await Swal.fire({
+        title: 'No es posible iniciar la evaluación',
+        text: err.message || 'Ha alcanzado el límite de intentos o no tiene acceso.',
+        icon: 'warning',
+        confirmButtonColor: '#4f46e5',
+        background: '#0f172a',
+        color: '#f8fafc'
+      });
+      navigate('/estudiante');
+    } finally {
+      setLoading(false);
+    }
   }, [subject, navigate]);
+
+  // Initialize or recover evaluation attempt
+  useEffect(() => {
+    loadEvaluationAttempt();
+  }, [loadEvaluationAttempt]);
 
   // Finalize routine (manual or automatic timeout)
   const executeFinalSubmit = useCallback(
@@ -171,16 +171,16 @@ export default function EvaluacionPage() {
     const unansweredCount = totalQuestions - answeredCount;
 
     const confirm = await Swal.fire({
-      title: '¿Finalizar y enviar evaluación?',
+      title: '¿Finalizar y calificar evaluación?',
       html:
         unansweredCount > 0
-          ? `Ha respondido <strong>${answeredCount} de ${totalQuestions}</strong> preguntas.<br/><span style="color:#fbbf24">Aún tiene ${unansweredCount} pregunta(s) sin responder.</span><br/>Una vez enviada, la evaluación no podrá modificarse.`
-          : `Ha respondido las <strong>${totalQuestions} preguntas</strong> de este intento.<br/>Una vez enviada, la evaluación quedará cerrada de forma definitiva.`,
+          ? `Ha respondido <strong>${answeredCount} de ${totalQuestions}</strong> preguntas.<br/><span style="color:#fbbf24">Aún tiene ${unansweredCount} pregunta(s) sin responder.</span><br/>Una vez enviada, se calculará su calificación de este intento.`
+          : `Ha respondido las <strong>${totalQuestions} preguntas</strong> de este intento.<br/>Una vez enviada, se mostrará su calificación y se actualizará su nota más alta.`,
       icon: unansweredCount > 0 ? 'warning' : 'question',
       showCancelButton: true,
       confirmButtonColor: '#10b981',
       cancelButtonColor: '#334155',
-      confirmButtonText: 'Sí, finalizar y enviar',
+      confirmButtonText: 'Sí, finalizar y calificar',
       cancelButtonText: 'Seguir revisando',
       background: '#0f172a',
       color: '#f8fafc'
@@ -196,62 +196,107 @@ export default function EvaluacionPage() {
       <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-200">
         <div className="text-center space-y-3">
           <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
-          <p className="text-base font-bold">Preparando evaluación segura de {subject === 'fisica' ? 'Física' : 'Química'}...</p>
+          <p className="text-base font-bold">Preparando evaluación de {subject === 'fisica' ? 'Física' : 'Química'}...</p>
           <p className="text-xs text-slate-400">Generando orden aleatorio de preguntas y opciones</p>
         </div>
       </div>
     );
   }
 
-  // Receipt screen after submission (Hides score and correct answers per strict specification)
+  // Receipt screen after submission showing Attempt Score and Highest Final Grade
   if (completedReceipt) {
+    const durationMinutes = Math.round((completedReceipt.durationSeconds || 1500) / 60);
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
-        <div className="max-w-lg w-full rounded-2xl border border-emerald-500/40 bg-slate-900 p-8 text-center shadow-2xl">
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 py-10">
+        <div className="max-w-xl w-full rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 sm:p-8 text-center shadow-2xl">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">
             <CheckCircle2 className="h-9 w-9" />
           </div>
           <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-300 border border-emerald-500/30">
-            Comprobante Oficial de Entrega
+            Resultados de Evaluación • Intento #{completedReceipt.attemptNumber} de 3
           </span>
           <h1 className="mt-3 text-2xl font-extrabold text-white">
             ¡Evaluación de {subject === 'fisica' ? 'Física' : 'Química'} Finalizada!
           </h1>
           <p className="mt-2 text-sm text-slate-300">
-            Sus respuestas han sido calificadas y almacenadas de manera segura en el servidor para revisión exclusiva del comité docente.
+            Cada estudiante cuenta con 3 intentos. Su <strong>Calificación Final</strong> corresponde a la calificación más alta obtenida.
           </p>
 
-          <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950 p-4 text-left text-xs space-y-2 text-slate-300">
-            <div className="flex justify-between">
-              <span className="text-slate-400">Código de Transacción:</span>
-              <code className="font-mono text-indigo-300">{completedReceipt.attemptId}</code>
+          {/* Current Attempt Grade vs Final (Highest) Grade */}
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 text-center">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Calificación de Este Intento (#{completedReceipt.attemptNumber})
+              </div>
+              <div className="mt-2 text-3xl font-extrabold text-white">
+                {completedReceipt.percentage}%
+              </div>
+              <div className="mt-1 text-xs font-semibold text-indigo-300">
+                {completedReceipt.score} / {completedReceipt.maxScore} puntos ({completedReceipt.correctCount}/{completedReceipt.totalQuestions} aciertos)
+              </div>
             </div>
+
+            <div className="rounded-2xl border border-amber-500/50 bg-gradient-to-br from-amber-950/40 to-emerald-950/30 p-4 text-center">
+              <div className="flex items-center justify-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-amber-300">
+                <Trophy className="h-4 w-4 text-amber-400" />
+                <span>Calificación Final (Nota Más Alta)</span>
+              </div>
+              <div className="mt-2 text-3xl font-extrabold text-emerald-400">
+                {completedReceipt.finalPercentage}%
+              </div>
+              <div className="mt-1 text-xs font-semibold text-amber-200">
+                {completedReceipt.finalScore} / {completedReceipt.finalMaxScore} puntos (Intento #{completedReceipt.bestAttemptNumber})
+              </div>
+            </div>
+          </div>
+
+          {/* Start Time, Duration & Closing Time Details */}
+          <div className="mt-5 rounded-xl border border-slate-800 bg-slate-950 p-4 text-left text-xs space-y-2 text-slate-300">
             <div className="flex justify-between">
               <span className="text-slate-400">Asignatura:</span>
               <span className="font-bold text-white">{subject === 'fisica' ? 'Física (10° Grado)' : 'Química (10° Grado)'}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Número de Intento:</span>
-              <span className="font-bold text-white">Intento #{completedReceipt.attemptNumber} de 3</span>
+              <span className="text-slate-400">Hora de Inicio de la Prueba:</span>
+              <span className="font-semibold text-white">{formatDateTime(completedReceipt.startedAt)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Preguntas Respondidas:</span>
-              <span className="font-bold text-emerald-400">
-                {completedReceipt.answeredCount} / {completedReceipt.totalQuestions}
+              <span className="text-slate-400">Duración de la Prueba:</span>
+              <span className="font-semibold text-sky-300">
+                {durationMinutes} min (Tiempo empleado: {formatSeconds(completedReceipt.timeSpentSeconds || 0)})
               </span>
             </div>
             <div className="flex justify-between">
+              <span className="text-slate-400">Hora de Cierre / Entrega:</span>
+              <span className="font-semibold text-white">{formatDateTime(completedReceipt.completedAt)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Ventana General del Examen:</span>
+              <span className="font-semibold text-indigo-300">Sáb 14 Nov 13:00 — Dom 15 Nov 23:59</span>
+            </div>
+            <div className="flex justify-between">
               <span className="text-slate-400">Intentos Restantes en esta Asignatura:</span>
-              <span className="font-bold text-sky-300">{completedReceipt.remainingAttempts}</span>
+              <span className="font-bold text-emerald-400">{completedReceipt.remainingAttempts} de 3</span>
             </div>
           </div>
 
-          <button
-            onClick={() => navigate('/estudiante')}
-            className="mt-7 w-full rounded-xl bg-indigo-600 py-3.5 px-6 text-sm font-bold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 transition-all cursor-pointer"
-          >
-            Volver a Mi Panel de Estudiante
-          </button>
+          <div className="mt-7 flex flex-col sm:flex-row gap-3">
+            {completedReceipt.remainingAttempts > 0 && (
+              <button
+                onClick={loadEvaluationAttempt}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3.5 px-5 text-sm font-bold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-500 transition-all cursor-pointer"
+              >
+                <Play className="h-4 w-4" />
+                <span>Realizar Intento #{completedReceipt.attemptNumber + 1} de 3</span>
+              </button>
+            )}
+            <button
+              onClick={() => navigate('/estudiante')}
+              className="flex-1 rounded-xl bg-indigo-600 py-3.5 px-5 text-sm font-bold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-500 transition-all cursor-pointer"
+            >
+              Volver a Mi Panel de Estudiante
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -266,6 +311,7 @@ export default function EvaluacionPage() {
   const totalQuestions = attempt.questions.length;
   const isLowTime = remainingSeconds <= 300;
   const isCriticalTime = remainingSeconds <= 60;
+  const attemptDurationMinutes = Math.round((attempt.durationSeconds || 1500) / 60);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
@@ -328,6 +374,28 @@ export default function EvaluacionPage() {
               <Send className="h-4 w-4" />
               <span>Finalizar Evaluación</span>
             </button>
+          </div>
+        </div>
+
+        {/* Start Time, Duration & Closing Time Strip */}
+        <div className="mx-auto mt-2.5 max-w-6xl grid grid-cols-1 sm:grid-cols-3 gap-2 border-t border-slate-800/80 pt-2.5 text-xs">
+          <div className="flex items-center gap-2 text-slate-300">
+            <Calendar className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+            <span>
+              <strong>Hora de Inicio:</strong> {formatDateTime(attempt.startedAt)} <span className="text-slate-400">(Apertura general: Sáb 14 Nov, 13:00)</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-slate-300">
+            <Clock className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+            <span>
+              <strong>Duración de la Prueba:</strong> {attemptDurationMinutes} minutos ({totalQuestions} preguntas)
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-slate-300">
+            <Calendar className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+            <span>
+              <strong>Hora de Cierre:</strong> {formatDateTime(attempt.expiresAt)} <span className="text-slate-400">(Cierre general: Dom 15 Nov, 23:59)</span>
+            </span>
           </div>
         </div>
       </header>
@@ -483,6 +551,16 @@ export default function EvaluacionPage() {
             </div>
           </div>
 
+          <div className="rounded-2xl border border-amber-500/25 bg-amber-950/20 p-5 text-xs text-amber-200 space-y-2">
+            <div className="flex items-center gap-2 font-bold text-amber-300">
+              <Trophy className="h-4 w-4 text-amber-400" />
+              <span>Criterio de Calificación Final</span>
+            </div>
+            <p>
+              Cuenta con <strong>3 intentos</strong> para realizar el examen. Al finalizar, se le mostrará su calificación final, la cual será la <strong>calificación más alta</strong> alcanzada entre sus intentos.
+            </p>
+          </div>
+
           <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 text-xs text-slate-400 space-y-2">
             <div className="flex items-center gap-2 font-bold text-slate-200">
               <ShieldCheck className="h-4 w-4 text-indigo-400" />
@@ -497,4 +575,3 @@ export default function EvaluacionPage() {
     </div>
   );
 }
-

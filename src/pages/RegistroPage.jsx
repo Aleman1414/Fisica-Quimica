@@ -19,6 +19,7 @@ import {
   loginParticipantByDocumento,
   getSavedStudentSession
 } from '../services/evaluationService';
+import ExamScheduleBanner from '../components/ExamScheduleBanner';
 
 export default function RegistroPage() {
   const navigate = useNavigate();
@@ -119,6 +120,9 @@ export default function RegistroPage() {
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-slate-950 py-10 px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-4xl mb-8">
+        <ExamScheduleBanner durationMinutes={25} />
+      </div>
       <div className="mx-auto max-w-xl">
         <div className="text-center mb-8">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/15 px-3.5 py-1 text-xs font-bold text-indigo-300 border border-indigo-500/30">

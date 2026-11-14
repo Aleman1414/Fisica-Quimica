@@ -13,8 +13,13 @@ const INITIAL_SETTINGS = {
   questionsPerAttempt: 10,
   fisicaDurationMinutes: 25,
   quimicaDurationMinutes: 25,
+  examWindowStart: '2026-11-14T13:00:00-06:00',
+  examWindowEnd: '2026-11-15T23:59:59-06:00',
+  examWindowStartLabel: 'Sábado 14 de noviembre de 2026 • 13:00',
+  examWindowEndLabel: 'Domingo 15 de noviembre de 2026 • 23:59',
+  examWindowDurationLabel: '34 h 59 min (25 min por intento)',
   allowRegistration: true,
-  hideResultsFromStudents: true
+  hideResultsFromStudents: false
 };
 
 module.exports = {

@@ -15,6 +15,7 @@ import {
   FileBarChart2
 } from 'lucide-react';
 import { getSavedStudentSession } from '../services/evaluationService';
+import ExamScheduleBanner from '../components/ExamScheduleBanner';
 
 export default function HomePage() {
   const studentSession = getSavedStudentSession();
@@ -22,7 +23,7 @@ export default function HomePage() {
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-slate-950 text-slate-100">
       {/* Hero Section */}
-      <section className="relative overflow-hidden border-b border-slate-800/80 py-16 sm:py-24">
+      <section className="relative overflow-hidden border-b border-slate-800/80 py-14 sm:py-20">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/30 via-slate-950 to-slate-950" />
         <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-3xl text-center">
@@ -37,9 +38,8 @@ export default function HomePage() {
               </span>
             </h1>
             <p className="mt-6 text-lg leading-relaxed text-slate-300">
-              Entorno seguro de evaluación diagnóstica y sumativa para estudiantes de Décimo Grado.
-              Generación aleatoria de reactivos, control estricto de tres intentos por asignatura,
-              recuperación automática de sesiones interrumpidas y resguardo confidencial de calificaciones.
+              Entorno seguro de evaluación diagnóstica y sumativa para estudiantes de Décimo Grado (Décimo - 1 y Décimo - 2).
+              Cada estudiante dispone de tres intentos por asignatura y obtiene como calificación final la nota más alta alcanzada.
             </p>
 
             <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
@@ -72,8 +72,13 @@ export default function HomePage() {
             </div>
           </div>
 
+          {/* Official Exam Schedule & Countdown Timer */}
+          <div className="mt-12">
+            <ExamScheduleBanner durationMinutes={25} />
+          </div>
+
           {/* Subject Highlight Cards */}
-          <div className="mt-16 grid gap-6 md:grid-cols-2">
+          <div className="mt-10 grid gap-6 md:grid-cols-2">
             <div className="rounded-2xl border border-indigo-500/25 bg-gradient-to-br from-slate-900/95 to-indigo-950/30 p-7 shadow-xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3.5">
@@ -86,12 +91,12 @@ export default function HomePage() {
                   </div>
                 </div>
                 <span className="rounded-lg bg-indigo-500/15 px-3 py-1 text-xs font-bold text-indigo-300 border border-indigo-500/30">
-                  Máx. 3 Intentos
+                  3 Intentos • Nota Más Alta
                 </span>
               </div>
               <p className="mt-4 text-sm text-slate-300 leading-relaxed">
-                Evalúa competencias en magnitudes del Sistema Internacional, conversión de unidades, análisis vectorial,
-                cinemática (MRU, MRUA, caída libre), leyes de Newton, trabajo, potencia, conservación de la energía mecánica y termodinámica.
+                Evalúa competencias en magnitudes del Sistema Internacional, conversión de unidades, magnitudes escalares y vectoriales,
+                cinemática (MRU, MRUA, caída libre, MCU), energía cinética y potencial, potencia mecánica, conservación de la energía y termodinámica.
               </p>
               <div className="mt-6 grid grid-cols-2 gap-3 text-xs text-slate-300">
                 <div className="flex items-center gap-2 rounded-lg bg-slate-900/80 px-3 py-2 border border-slate-800">
@@ -100,7 +105,7 @@ export default function HomePage() {
                 </div>
                 <div className="flex items-center gap-2 rounded-lg bg-slate-900/80 px-3 py-2 border border-slate-800">
                   <Clock className="h-4 w-4 text-indigo-400 shrink-0" />
-                  <span>25 minutos con autoguardado</span>
+                  <span>25 minutos por intento</span>
                 </div>
               </div>
             </div>
@@ -117,7 +122,7 @@ export default function HomePage() {
                   </div>
                 </div>
                 <span className="rounded-lg bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-300 border border-emerald-500/30">
-                  Máx. 3 Intentos
+                  3 Intentos • Nota Más Alta
                 </span>
               </div>
               <p className="mt-4 text-sm text-slate-300 leading-relaxed">
@@ -131,7 +136,7 @@ export default function HomePage() {
                 </div>
                 <div className="flex items-center gap-2 rounded-lg bg-slate-900/80 px-3 py-2 border border-slate-800">
                   <Clock className="h-4 w-4 text-emerald-400 shrink-0" />
-                  <span>25 minutos con autoguardado</span>
+                  <span>25 minutos por intento</span>
                 </div>
               </div>
             </div>
@@ -167,10 +172,10 @@ export default function HomePage() {
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
-              <Lock className="h-8 w-8 text-amber-400 mb-4" />
-              <h3 className="text-base font-bold text-white">Ocultamiento de Respuestas</h3>
+              <Award className="h-8 w-8 text-amber-400 mb-4" />
+              <h3 className="text-base font-bold text-white">Calificación Más Alta</h3>
               <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Las respuestas correctas nunca se envían al navegador del estudiante. La calificación se procesa de forma confidencial para el docente.
+                Al finalizar cada intento y completar sus evaluaciones, el sistema muestra su Calificación Final, correspondiente a la calificación más alta de sus 3 intentos.
               </p>
             </div>
 
@@ -178,7 +183,7 @@ export default function HomePage() {
               <FileBarChart2 className="h-8 w-8 text-emerald-400 mb-4" />
               <h3 className="text-base font-bold text-white">Control de 3 Intentos</h3>
               <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Cada participante dispone de un máximo estricto de 3 intentos en Física y 3 intentos en Química, auditados transaccionalmente.
+                Cada participante dispone de un máximo estricto de 3 intentos en Física y 3 intentos en Química dentro del horario oficial establecido.
               </p>
             </div>
           </div>

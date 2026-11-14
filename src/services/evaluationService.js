@@ -20,8 +20,8 @@ import { INITIAL_QUESTIONS, INITIAL_SECTIONS, INITIAL_SETTINGS } from '../data/i
 
 const STORAGE_KEYS = {
   SECTIONS: 'eval10_sections_v2',
-  SETTINGS: 'eval10_settings_v1',
-  QUESTIONS: 'eval10_questions_v1',
+  SETTINGS: 'eval10_settings_v2',
+  QUESTIONS: 'eval10_questions_v2',
   PARTICIPANTS: 'eval10_participants_v1',
   PARTICIPANTS_BY_DOC: 'eval10_participants_by_doc_v1',
   ACTIVE_ATTEMPTS: 'eval10_active_attempts_v1',
@@ -31,6 +31,16 @@ const STORAGE_KEYS = {
   STUDENT_SESSION: 'eval10_student_session_v1',
   ADMIN_SESSION: 'eval10_admin_session_v1'
 };
+
+const REMOVED_FORCE_QUESTION_IDS = new Set([
+  'fis-004',
+  'fis-009',
+  'fis-010',
+  'fis-011',
+  'fis-012',
+  'fis-013',
+  'fis-020'
+]);
 
 export const DEFAULT_TEACHER_REGISTRATION_CODE = 'DOCENTE-2026';
 
@@ -185,6 +195,8 @@ export function saveStudentSession(participant) {
     phone: participant.phone || '',
     attemptsCount: participant.attemptsCount || { fisica: 0, quimica: 0 },
     activeAttemptId: participant.activeAttemptId || { fisica: null, quimica: null },
+    bestScores: participant.bestScores || { fisica: null, quimica: null },
+    attemptsHistory: participant.attemptsHistory || { fisica: [], quimica: [] },
     createdAt: participant.createdAt,
     updatedAt: participant.updatedAt
   };
@@ -497,23 +509,97 @@ export async function getStudentDashboardStatus(participantId) {
           attemptNumber: freshAttempts[activeId].attemptNumber,
           startedAt: freshAttempts[activeId].startedAt,
           expiresAt: freshAttempts[activeId].expiresAt,
+          durationSeconds: freshAttempts[activeId].durationSeconds || 1500,
           answeredCount: Object.keys(freshAttempts[activeId].selectedAnswers || {}).length,
           totalQuestions: (freshAttempts[activeId].questions || []).length
         }
       : null;
 
-    const completedHistory = Object.values(freshAttempts)
+    const allResults = readLocalCollection(STORAGE_KEYS.RESULTS, []);
+    const historyMap = new Map();
+
+    // 1. From participant.attemptsHistory
+    const partSubjHistory = freshParticipant.attemptsHistory?.[subject] || [];
+    for (const item of partSubjHistory) {
+      if (item && item.attemptId) {
+        historyMap.set(item.attemptId, item);
+      }
+    }
+
+    // 2. From freshAttempts
+    Object.values(freshAttempts)
       .filter((a) => a.participantId === participantId && a.subject === subject && a.status === 'completed')
-      .sort((a, b) => a.attemptNumber - b.attemptNumber)
-      .map((a) => ({
-        attemptId: a.attemptId,
-        attemptNumber: a.attemptNumber,
-        startedAt: a.startedAt,
-        completedAt: a.completedAt,
-        answeredCount: Object.keys(a.selectedAnswers || {}).length,
-        totalQuestions: (a.questions || []).length,
-        status: 'Procesado y enviado al comité evaluador'
-      }));
+      .forEach((a) => {
+        const matchingResult = allResults.find((r) => r.attemptId === a.attemptId);
+        const totalQ = (a.questions || []).length || matchingResult?.totalQuestions || 10;
+        const maxS = a.maxScore ?? matchingResult?.maxScore ?? totalQ * 10;
+        const sc = a.score ?? matchingResult?.score ?? 0;
+        const pct = a.percentage ?? matchingResult?.percentage ?? (maxS > 0 ? Math.round((sc / maxS) * 1000) / 10 : 0);
+        const corr = a.correctCount ?? matchingResult?.correctCount ?? 0;
+        historyMap.set(a.attemptId, {
+          attemptId: a.attemptId,
+          attemptNumber: a.attemptNumber,
+          startedAt: a.startedAt,
+          expiresAt: a.expiresAt || (a.startedAt ? a.startedAt + (a.durationSeconds || 1500) * 1000 : null),
+          completedAt: a.completedAt,
+          durationSeconds: a.durationSeconds || 1500,
+          timeSpentSeconds: a.timeSpentSeconds ?? matchingResult?.timeSpentSeconds ?? 0,
+          answeredCount: Object.keys(a.selectedAnswers || {}).length,
+          totalQuestions: totalQ,
+          correctCount: corr,
+          score: sc,
+          maxScore: maxS,
+          percentage: pct
+        });
+      });
+
+    // 3. From allResults
+    allResults
+      .filter((r) => r.participantId === participantId && r.subject === subject)
+      .forEach((r) => {
+        if (!historyMap.has(r.attemptId)) {
+          historyMap.set(r.attemptId, {
+            attemptId: r.attemptId,
+            attemptNumber: r.attemptNumber,
+            startedAt: r.startedAt,
+            expiresAt: r.startedAt ? r.startedAt + 1500 * 1000 : null,
+            completedAt: r.completedAt,
+            durationSeconds: 1500,
+            timeSpentSeconds: r.timeSpentSeconds || 0,
+            answeredCount: r.answeredCount || 0,
+            totalQuestions: r.totalQuestions || 10,
+            correctCount: r.correctCount || 0,
+            score: r.score || 0,
+            maxScore: r.maxScore || 100,
+            percentage: r.percentage || 0
+          });
+        }
+      });
+
+    const completedHistory = Array.from(historyMap.values()).sort((a, b) => a.attemptNumber - b.attemptNumber);
+
+    // Compute Final Grade = Highest Grade across completed attempts
+    let finalGrade = freshParticipant.bestScores?.[subject] || null;
+    if (completedHistory.length > 0) {
+      const highest = completedHistory.reduce((best, curr) => {
+        if (!best) return curr;
+        if ((curr.percentage ?? 0) > (best.percentage ?? 0)) return curr;
+        if ((curr.percentage ?? 0) === (best.percentage ?? 0) && (curr.score ?? 0) > (best.score ?? 0)) return curr;
+        return best;
+      }, null);
+      if (highest) {
+        finalGrade = {
+          attemptId: highest.attemptId,
+          attemptNumber: highest.attemptNumber,
+          score: highest.score,
+          maxScore: highest.maxScore,
+          percentage: highest.percentage,
+          correctCount: highest.correctCount,
+          totalQuestions: highest.totalQuestions,
+          completedAt: highest.completedAt
+        };
+      }
+    }
 
     return {
       subject,
@@ -523,6 +609,7 @@ export async function getStudentDashboardStatus(participantId) {
       canStartNew: completedCount < maxAttempts && !activeAttempt,
       activeAttempt,
       completedHistory,
+      finalGrade,
       durationMinutes: subject === 'fisica'
         ? (Number(settings.fisicaDurationMinutes) || 25)
         : (Number(settings.quimicaDurationMinutes) || 25),
@@ -606,14 +693,18 @@ export async function startOrResumeEvaluation({ participantId, subject }) {
       if (!pubSnap.empty) {
         const pubList = [];
         pubSnap.forEach((d) => pubList.push({ id: d.id, ...d.data() }));
-        subjectQuestions = pubList.filter((q) => q.subject === subject && q.active !== false);
+        subjectQuestions = pubList.filter(
+          (q) => q.subject === subject && q.active !== false && !REMOVED_FORCE_QUESTION_IDS.has(q.id)
+        );
       }
     } catch (e) {
       console.warn('questions_public fetch notice:', e.message);
     }
   }
 
-  const allQuestions = readLocalCollection(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS);
+  const allQuestions = readLocalCollection(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS).filter(
+    (q) => !REMOVED_FORCE_QUESTION_IDS.has(q.id)
+  );
   if (subjectQuestions.length === 0) {
     subjectQuestions = allQuestions.filter((q) => q.subject === subject && q.active !== false);
   }
@@ -871,6 +962,12 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
   attempt.completedAt = now;
   attempt.updatedAt = now;
   attempt.completionReason = reason;
+  attempt.score = score;
+  attempt.maxScore = maxScore;
+  attempt.percentage = percentage;
+  attempt.correctCount = correctCount;
+  attempt.totalQuestions = questions.length;
+  attempt.timeSpentSeconds = timeSpentSeconds;
   activeAttempts[attemptId] = attempt;
 
   const prevCount = Number(participant.attemptsCount?.[attempt.subject] || 0);
@@ -883,6 +980,63 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
     ...(participant.activeAttemptId || {}),
     [attempt.subject]: null
   };
+
+  const attemptSummaryItem = {
+    attemptId: attempt.attemptId,
+    attemptNumber: attempt.attemptNumber,
+    subject: attempt.subject,
+    startedAt: attempt.startedAt,
+    expiresAt: attempt.expiresAt,
+    completedAt: now,
+    durationSeconds: attempt.durationSeconds || 1500,
+    timeSpentSeconds,
+    answeredCount: Object.keys(finalSelected).length,
+    totalQuestions: questions.length,
+    correctCount,
+    score,
+    maxScore,
+    percentage
+  };
+
+  const prevSubjHistory = (participant.attemptsHistory?.[attempt.subject] || []).filter(
+    (h) => h.attemptId !== attempt.attemptId && h.attemptNumber !== attempt.attemptNumber
+  );
+  const updatedSubjHistory = [...prevSubjHistory, attemptSummaryItem].sort(
+    (a, b) => a.attemptNumber - b.attemptNumber
+  );
+  participant.attemptsHistory = {
+    ...(participant.attemptsHistory || { fisica: [], quimica: [] }),
+    [attempt.subject]: updatedSubjHistory
+  };
+
+  // Compute the highest grade (Calificación Final = Calificación Más Alta) across all completed attempts of this subject
+  const subjectCompletedResults = results.filter(
+    (r) => r.participantId === participant.id && r.subject === attempt.subject
+  );
+  const candidatePool = [...updatedSubjHistory, ...subjectCompletedResults];
+  const bestAttempt = candidatePool.reduce((best, curr) => {
+    if (!best) return curr;
+    if ((curr.percentage ?? 0) > (best.percentage ?? 0)) return curr;
+    if ((curr.percentage ?? 0) === (best.percentage ?? 0) && (curr.score ?? 0) > (best.score ?? 0)) return curr;
+    return best;
+  }, attemptSummaryItem);
+
+  const finalGrade = {
+    attemptId: bestAttempt.attemptId,
+    attemptNumber: bestAttempt.attemptNumber,
+    score: bestAttempt.score,
+    maxScore: bestAttempt.maxScore,
+    percentage: bestAttempt.percentage,
+    correctCount: bestAttempt.correctCount,
+    totalQuestions: bestAttempt.totalQuestions || questions.length,
+    completedAt: bestAttempt.completedAt || now
+  };
+
+  participant.bestScores = {
+    ...(participant.bestScores || { fisica: null, quimica: null }),
+    [attempt.subject]: finalGrade
+  };
+
   participant.updatedAt = now;
   participants[pIdx] = participant;
 
@@ -900,11 +1054,19 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
         status: 'completed',
         completedAt: now,
         updatedAt: now,
-        completionReason: reason
+        completionReason: reason,
+        score,
+        maxScore,
+        percentage,
+        correctCount,
+        totalQuestions: questions.length,
+        timeSpentSeconds
       });
       await updateDoc(doc(db, 'participants', participant.id), {
         attemptsCount: participant.attemptsCount,
         activeAttemptId: participant.activeAttemptId,
+        attemptsHistory: participant.attemptsHistory,
+        bestScores: participant.bestScores,
         updatedAt: now
       });
     } catch (e) {
@@ -916,15 +1078,29 @@ export async function submitEvaluationAttempt({ attemptId, selectedAnswers = {},
 
   return {
     success: true,
-    message: 'Su evaluación ha sido finalizada y enviada correctamente. Los resultados han sido registrados para revisión exclusiva del comité docente.',
+    message: 'Su evaluación ha sido finalizada y calificada correctamente. Su calificación final corresponde a la nota más alta obtenida en sus intentos.',
     summary: {
       attemptId: attempt.attemptId,
       subject: attempt.subject,
       attemptNumber: attempt.attemptNumber,
+      maxAttempts,
       status: 'completed',
+      startedAt: attempt.startedAt,
+      expiresAt: attempt.expiresAt,
       completedAt: now,
+      durationSeconds: attempt.durationSeconds || 1500,
+      timeSpentSeconds,
       answeredCount: Object.keys(finalSelected).length,
       totalQuestions: questions.length,
+      correctCount,
+      score,
+      maxScore,
+      percentage,
+      finalScore: finalGrade.score,
+      finalMaxScore: finalGrade.maxScore,
+      finalPercentage: finalGrade.percentage,
+      bestAttemptNumber: finalGrade.attemptNumber,
+      finalGrade,
       remainingAttempts: Math.max(0, maxAttempts - newCount)
     }
   };
@@ -1276,7 +1452,11 @@ export async function adminGetOverviewData() {
       if (remoteResults.length > 0) writeLocalCollection(STORAGE_KEYS.RESULTS, remoteResults);
 
       const remoteQuestions = [];
-      qSnap.forEach((d) => remoteQuestions.push({ id: d.id, ...d.data() }));
+      qSnap.forEach((d) => {
+        if (!REMOVED_FORCE_QUESTION_IDS.has(d.id)) {
+          remoteQuestions.push({ id: d.id, ...d.data() });
+        }
+      });
       if (remoteQuestions.length > 0) writeLocalCollection(STORAGE_KEYS.QUESTIONS, remoteQuestions);
 
       const remoteSections = [];
@@ -1511,13 +1691,20 @@ export async function adminResetParticipantAttempts(participantId, subject) {
   const idx = participants.findIndex((p) => p.id === participantId);
   if (idx === -1) throw new Error('Participante no encontrado.');
 
+  if (!participants[idx].attemptsHistory) participants[idx].attemptsHistory = { fisica: [], quimica: [] };
+  if (!participants[idx].bestScores) participants[idx].bestScores = { fisica: null, quimica: null };
+
   if (subject === 'all' || subject === 'fisica') {
     participants[idx].attemptsCount.fisica = 0;
     participants[idx].activeAttemptId.fisica = null;
+    participants[idx].attemptsHistory.fisica = [];
+    participants[idx].bestScores.fisica = null;
   }
   if (subject === 'all' || subject === 'quimica') {
     participants[idx].attemptsCount.quimica = 0;
     participants[idx].activeAttemptId.quimica = null;
+    participants[idx].attemptsHistory.quimica = [];
+    participants[idx].bestScores.quimica = null;
   }
   participants[idx].updatedAt = Date.now();
   writeLocalCollection(STORAGE_KEYS.PARTICIPANTS, participants);
@@ -1525,6 +1712,8 @@ export async function adminResetParticipantAttempts(participantId, subject) {
     updateDoc(doc(db, 'participants', participantId), {
       attemptsCount: participants[idx].attemptsCount,
       activeAttemptId: participants[idx].activeAttemptId,
+      attemptsHistory: participants[idx].attemptsHistory,
+      bestScores: participants[idx].bestScores,
       updatedAt: participants[idx].updatedAt
     }).catch(() => {});
   }

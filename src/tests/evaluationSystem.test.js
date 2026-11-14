@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   ensureInitialized,
   getActiveSections,
+  getExamSettings,
   registerParticipant,
   loginParticipantByDocumento,
+  getStudentDashboardStatus,
   startOrResumeEvaluation,
   saveAttemptProgress,
   submitEvaluationAttempt,
@@ -22,10 +24,14 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     await ensureInitialized();
   });
 
-  it('1. Inicializa el banco oficial de 40 preguntas (20 Física y 20 Química) y 2 secciones de Décimo Grado (Décimo - 1 y Décimo - 2)', async () => {
+  it('1. Inicializa el banco oficial de 33 preguntas (13 Física sin temas de fuerza y 20 Química), horario oficial y 2 secciones de Décimo Grado', async () => {
     const sections = await getActiveSections();
     expect(sections.length).toBe(2);
     expect(sections.map((s) => s.code)).toEqual(['Décimo - 1', 'Décimo - 2']);
+
+    const settings = await getExamSettings();
+    expect(settings.examWindowStart).toBe('2026-11-14T13:00:00-06:00');
+    expect(settings.examWindowEnd).toBe('2026-11-15T23:59:59-06:00');
   });
 
   it('2. Registra participantes y previene duplicados por número de documento', async () => {
@@ -72,21 +78,22 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     });
   });
 
-  it('4. Permite guardar respuestas, recuperar evaluaciones interrumpidas y ocultar el puntaje al finalizar', async () => {
+  it('4. Permite guardar respuestas, recuperar evaluaciones interrumpidas y calcular la Calificación Final como la más alta de los 3 intentos', async () => {
     const student = await registerParticipant({
       documento: '0801-2010-00333',
       fullName: 'Diego Alejandro Paz',
       sectionId: 'sec-10-1'
     });
 
-    const started = await startOrResumeEvaluation({
+    // Intento #1: responder todas con 'a' (correctOptionId es 'a' en las preguntas iniciales)
+    const started1 = await startOrResumeEvaluation({
       participantId: student.id,
       subject: 'quimica'
     });
 
-    const firstQuestionId = started.attempt.questions[0].id;
+    const firstQuestionId = started1.attempt.questions[0].id;
     await saveAttemptProgress({
-      attemptId: started.attempt.attemptId,
+      attemptId: started1.attempt.attemptId,
       selectedAnswers: { [firstQuestionId]: 'a' }
     });
 
@@ -96,25 +103,56 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     });
 
     expect(resumed.resumed).toBe(true);
-    expect(resumed.attempt.attemptId).toBe(started.attempt.attemptId);
+    expect(resumed.attempt.attemptId).toBe(started1.attempt.attemptId);
     expect(resumed.attempt.selectedAnswers[firstQuestionId]).toBe('a');
 
-    const submitRes = await submitEvaluationAttempt({
-      attemptId: started.attempt.attemptId,
-      selectedAnswers: { [firstQuestionId]: 'a' }
+    // Responder 8 preguntas correctas ('a') en el Intento #1 -> 80%
+    const answersAttempt1 = {};
+    started1.attempt.questions.slice(0, 8).forEach((q) => {
+      answersAttempt1[q.id] = 'a';
     });
 
-    expect(submitRes.success).toBe(true);
-    expect(submitRes.summary.score).toBeUndefined();
-    expect(submitRes.summary.percentage).toBeUndefined();
-    expect(submitRes.summary.remainingAttempts).toBe(2);
+    const submitRes1 = await submitEvaluationAttempt({
+      attemptId: started1.attempt.attemptId,
+      selectedAnswers: answersAttempt1
+    });
+
+    expect(submitRes1.success).toBe(true);
+    expect(submitRes1.summary.score).toBe(80);
+    expect(submitRes1.summary.percentage).toBe(80);
+    expect(submitRes1.summary.finalPercentage).toBe(80);
+    expect(submitRes1.summary.startedAt).toBeDefined();
+    expect(submitRes1.summary.expiresAt).toBeDefined();
+    expect(submitRes1.summary.durationSeconds).toBe(1500);
+    expect(submitRes1.summary.remainingAttempts).toBe(2);
 
     await expect(
       saveAttemptProgress({
-        attemptId: started.attempt.attemptId,
+        attemptId: started1.attempt.attemptId,
         selectedAnswers: { [firstQuestionId]: 'b' }
       })
     ).rejects.toThrow(/finalizada/i);
+
+    // Intento #2: obtener una nota menor (30%) y verificar que la Calificación Final sigue siendo 80% (la más alta)
+    const started2 = await startOrResumeEvaluation({
+      participantId: student.id,
+      subject: 'quimica'
+    });
+    const answersAttempt2 = {};
+    started2.attempt.questions.slice(0, 3).forEach((q) => {
+      answersAttempt2[q.id] = 'a';
+    });
+    const submitRes2 = await submitEvaluationAttempt({
+      attemptId: started2.attempt.attemptId,
+      selectedAnswers: answersAttempt2
+    });
+    expect(submitRes2.summary.percentage).toBe(30);
+    expect(submitRes2.summary.finalPercentage).toBe(80);
+    expect(submitRes2.summary.bestAttemptNumber).toBe(1);
+
+    const dashboard = await getStudentDashboardStatus(student.id);
+    expect(dashboard.subjects.quimica.finalGrade.percentage).toBe(80);
+    expect(dashboard.subjects.quimica.finalGrade.attemptNumber).toBe(1);
   });
 
   it('5. Controla estrictamente el límite máximo de 3 intentos por asignatura', async () => {
@@ -161,7 +199,11 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
     expect(adminSession.role).toBe('admin');
 
     const overview = await adminGetOverviewData();
-    expect(overview.questions.length).toBe(40);
+    expect(overview.questions.length).toBe(33);
+    const forceTopics = overview.questions.filter(
+      (q) => q.subject === 'fisica' && /fuerza|newton|fricci|peso/i.test(`${q.topic} ${q.prompt}`)
+    );
+    expect(forceTopics.length).toBe(0);
 
     const newQ = await adminSaveQuestion({
       subject: 'fisica',
@@ -181,7 +223,7 @@ describe('Sistema Integral de Evaluaciones de Física y Química (10° Grado)', 
 
     expect(newQ.id).toBeDefined();
     const updatedOverview = await adminGetOverviewData();
-    expect(updatedOverview.questions.length).toBe(41);
+    expect(updatedOverview.questions.length).toBe(34);
   });
 
   it('7. Permite registrar múltiples accesos docentes con código institucional y gestionarlos desde /admin/docentes', async () => {

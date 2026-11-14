@@ -12,12 +12,17 @@ export const INITIAL_SETTINGS = {
   questionsPerAttempt: 10,
   fisicaDurationMinutes: 25,
   quimicaDurationMinutes: 25,
+  examWindowStart: '2026-11-14T13:00:00-06:00',
+  examWindowEnd: '2026-11-15T23:59:59-06:00',
+  examWindowStartLabel: 'Sábado 14 de noviembre de 2026 • 13:00',
+  examWindowEndLabel: 'Domingo 15 de noviembre de 2026 • 23:59',
+  examWindowDurationLabel: '34 h 59 min (25 min por intento)',
   allowRegistration: true,
-  hideResultsFromStudents: true
+  hideResultsFromStudents: false
 };
 
 export const INITIAL_QUESTIONS = [
-  // ==================== FÍSICA (20 PREGUNTAS - DÉCIMO GRADO) ====================
+  // ==================== FÍSICA (13 PREGUNTAS SIN TEMAS DE FUERZA - DÉCIMO GRADO) ====================
   {
     id: 'fis-001',
     subject: 'fisica',
@@ -27,9 +32,9 @@ export const INITIAL_QUESTIONS = [
     prompt: '¿Cuál de las siguientes opciones contiene únicamente magnitudes fundamentales del Sistema Internacional (SI)?',
     options: [
       { id: 'a', text: 'Longitud, masa, tiempo y temperatura termodinámica' },
-      { id: 'b', text: 'Fuerza, velocidad, aceleración y trabajo' },
-      { id: 'c', text: 'Masa, peso, densidad y volumen' },
-      { id: 'd', text: 'Longitud, energía, potencia y presión' }
+      { id: 'b', text: 'Área, velocidad, aceleración y volumen' },
+      { id: 'c', text: 'Masa, densidad, rapidez y volumen' },
+      { id: 'd', text: 'Longitud, energía, potencia y calor' }
     ],
     correctOptionId: 'a',
     points: 10,
@@ -70,25 +75,7 @@ export const INITIAL_QUESTIONS = [
     correctOptionId: 'a',
     points: 10,
     active: true,
-    explanation: 'Un escalar queda completamente definido por su valor numérico y su unidad (ej. masa, tiempo), mientras que un vector requiere módulo, dirección y sentido (ej. desplazamiento, fuerza).'
-  },
-  {
-    id: 'fis-004',
-    subject: 'fisica',
-    grade: 'Décimo Grado',
-    topic: 'Vectores y Escalares',
-    difficulty: 'Intermedio',
-    prompt: 'Dos fuerzas perpendiculares entre sí de 6 N (hacia el Este) y 8 N (hacia el Norte) actúan simultáneamente sobre un cuerpo. ¿Cuál es la magnitud de la fuerza resultante?',
-    options: [
-      { id: 'a', text: '10 N' },
-      { id: 'b', text: '14 N' },
-      { id: 'c', text: '2 N' },
-      { id: 'd', text: '48 N' }
-    ],
-    correctOptionId: 'a',
-    points: 10,
-    active: true,
-    explanation: 'Por el teorema de Pitágoras: R = √(6² + 8²) = √(36 + 64) = √100 = 10 N.'
+    explanation: 'Un escalar queda completamente definido por su valor numérico y su unidad (ej. masa, tiempo), mientras que un vector requiere módulo, dirección y sentido (ej. desplazamiento, velocidad).'
   },
   {
     id: 'fis-005',
@@ -163,96 +150,6 @@ export const INITIAL_QUESTIONS = [
     explanation: 'En caída libre desde el reposo, v = g·t = (9.8 m/s²)(3 s) = 29.4 m/s.'
   },
   {
-    id: 'fis-009',
-    subject: 'fisica',
-    grade: 'Décimo Grado',
-    topic: 'Leyes de Newton',
-    difficulty: 'Básico',
-    prompt: '¿Qué establece la Primera Ley de Newton o Ley de la Inercia?',
-    options: [
-      { id: 'a', text: 'Todo cuerpo permanece en reposo o en MRU a menos que actúe sobre él una fuerza neta externa no nula' },
-      { id: 'b', text: 'La aceleración de un objeto es directamente proporcional a su masa' },
-      { id: 'c', text: 'Un objeto solo se mueve si hay una fuerza constante empujándolo en todo instante' },
-      { id: 'd', text: 'Las fuerzas de acción y reacción actúan siempre sobre el mismo cuerpo' }
-    ],
-    correctOptionId: 'a',
-    points: 10,
-    active: true,
-    explanation: 'La Primera Ley de Newton indica que si la sumatoria de fuerzas externas es cero (ΣF = 0), el cuerpo mantiene su estado de reposo o de velocidad constante en línea recta.'
-  },
-  {
-    id: 'fis-010',
-    subject: 'fisica',
-    grade: 'Décimo Grado',
-    topic: 'Leyes de Newton',
-    difficulty: 'Intermedio',
-    prompt: '¿Qué fuerza neta se requiere para producir una aceleración de 3.5 m/s² en un bloque cuya masa es de 12 kg?',
-    options: [
-      { id: 'a', text: '42 N' },
-      { id: 'b', text: '15.5 N' },
-      { id: 'c', text: '3.43 N' },
-      { id: 'd', text: '84 N' }
-    ],
-    correctOptionId: 'a',
-    points: 10,
-    active: true,
-    explanation: 'Por la Segunda Ley de Newton: F = m · a = (12 kg)(3.5 m/s²) = 42 N.'
-  },
-  {
-    id: 'fis-011',
-    subject: 'fisica',
-    grade: 'Décimo Grado',
-    topic: 'Masa y Peso',
-    difficulty: 'Básico',
-    prompt: 'Un astronauta tiene una masa de 70 kg en la Tierra (g = 9.8 m/s²). Si viaja a la Luna donde la gravedad es 1.6 m/s², ¿cuál es su masa y su peso en la Luna?',
-    options: [
-      { id: 'a', text: 'Masa: 70 kg; Peso: 112 N' },
-      { id: 'b', text: 'Masa: 11.4 kg; Peso: 686 N' },
-      { id: 'c', text: 'Masa: 70 kg; Peso: 686 N' },
-      { id: 'd', text: 'Masa: 112 kg; Peso: 70 N' }
-    ],
-    correctOptionId: 'a',
-    points: 10,
-    active: true,
-    explanation: 'La masa es una propiedad intrínseca invariable (70 kg). El peso depende de la gravedad local: W = m·g_luna = 70 kg × 1.6 m/s² = 112 N.'
-  },
-  {
-    id: 'fis-012',
-    subject: 'fisica',
-    grade: 'Décimo Grado',
-    topic: 'Leyes de Newton - Fricción',
-    difficulty: 'Avanzado',
-    prompt: 'Una caja de 20 kg descansa sobre una superficie horizontal con coeficiente de fricción cinética μk = 0.25. Si se empuja horizontalmente con una fuerza de 89 N (use g = 9.8 m/s²), ¿cuál es la fuerza de fricción cinética que actúa sobre la caja?',
-    options: [
-      { id: 'a', text: '49 N' },
-      { id: 'b', text: '196 N' },
-      { id: 'c', text: '40 N' },
-      { id: 'd', text: '22.25 N' }
-    ],
-    correctOptionId: 'a',
-    points: 10,
-    active: true,
-    explanation: 'La fuerza normal en plano horizontal es N = m·g = 20 × 9.8 = 196 N. La fricción cinética es fk = μk·N = 0.25 × 196 N = 49 N.'
-  },
-  {
-    id: 'fis-013',
-    subject: 'fisica',
-    grade: 'Décimo Grado',
-    topic: 'Trabajo y Energía',
-    difficulty: 'Intermedio',
-    prompt: 'Una fuerza horizontal constante de 50 N desplaza un objeto 8 metros en la misma dirección de la fuerza. ¿Cuánto trabajo mecánico realiza dicha fuerza?',
-    options: [
-      { id: 'a', text: '400 J' },
-      { id: 'b', text: '58 J' },
-      { id: 'c', text: '6.25 J' },
-      { id: 'd', text: '0 J' }
-    ],
-    correctOptionId: 'a',
-    points: 10,
-    active: true,
-    explanation: 'El trabajo mecánico cuando θ = 0° es W = F·d·cos(0°) = (50 N)(8 m)(1) = 400 Joules (J).'
-  },
-  {
     id: 'fis-014',
     subject: 'fisica',
     grade: 'Décimo Grado',
@@ -312,7 +209,7 @@ export const INITIAL_QUESTIONS = [
     grade: 'Décimo Grado',
     topic: 'Conservación de la Energía',
     difficulty: 'Avanzado',
-    prompt: 'En ausencia de fuerzas de fricción, cuando un objeto cae libremente desde cierta altura hacia el suelo, ¿qué ocurre con sus energías potencial (Ep) y cinética (Ek)?',
+    prompt: 'En ausencia de resistencia del aire, cuando un objeto cae libremente desde cierta altura hacia el suelo, ¿qué ocurre con sus energías potencial (Ep) y cinética (Ek)?',
     options: [
       { id: 'a', text: 'La Ep disminuye, la Ek aumenta en igual proporción y la energía mecánica total permanece constante' },
       { id: 'b', text: 'Tanto la Ep como la Ek disminuyen hasta anularse al llegar al suelo' },
@@ -359,24 +256,6 @@ export const INITIAL_QUESTIONS = [
     points: 10,
     active: true,
     explanation: 'La conversión de Celsius a Kelvin es T(K) = T(°C) + 273.15 = 27 + 273.15 = 300.15 K.'
-  },
-  {
-    id: 'fis-020',
-    subject: 'fisica',
-    grade: 'Décimo Grado',
-    topic: 'Hidrostática y Presión',
-    difficulty: 'Intermedio',
-    prompt: 'Una fuerza perpendicular de 600 N se aplica uniformemente sobre una superficie de área igual a 0.5 m². ¿Cuál es la presión ejercida sobre la superficie?',
-    options: [
-      { id: 'a', text: '1,200 Pa' },
-      { id: 'b', text: '300 Pa' },
-      { id: 'c', text: '600.5 Pa' },
-      { id: 'd', text: '120 Pa' }
-    ],
-    correctOptionId: 'a',
-    points: 10,
-    active: true,
-    explanation: 'La presión se define como P = F / A = 600 N / 0.5 m² = 1,200 Pascales (Pa).'
   },
 
   // ==================== QUÍMICA (20 PREGUNTAS - DÉCIMO GRADO) ====================
